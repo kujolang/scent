@@ -1,0 +1,1978 @@
+#!/usr/bin/env kujo
+
+VERSION := "0.1.0-kujo"
+
+func usage_text() {
+    return "Usage:\n  scent pack --task <text> [--out <path>] [--budget <n>] [--target codex|claude|deepseek|generic] [--include <path>] [--exclude <path>] [--changed] [--staged] [--unstaged] [--max-files <n>] [--max-file-bytes <n>] [--format md|json|both] [--verbose] [--json] [--dry-run]"
+}
+
+func version_text() {
+    return "Scent " + VERSION
+}
+
+func defaults() {
+    return {
+        "task": "",
+        "out": null,
+        "budget": 12000,
+        "target": "codex",
+        "include": [],
+        "exclude": [],
+        "changed": false,
+        "staged": false,
+        "unstaged": false,
+        "max_files": 40,
+        "max_file_bytes": 50000,
+        "format": "both",
+        "verbose": false,
+        "json_stdout": false,
+        "dry_run": false
+    }
+}
+
+func ok(value) {
+    return {"ok": true, "value": value}
+}
+
+func err(message, code) {
+    return {"ok": false, "error": message, "exit_code": code}
+}
+
+func to_int_safe(value, fallback) {
+    try {
+        return to_int(value)
+    } except e {
+        return fallback
+    }
+}
+
+func shell_quote(arg) {
+    s := to_string(arg)
+    return "'" + replace(s, "'", "'\"'\"'") + "'"
+}
+
+func parse_cli(argv) {
+    if len(argv) == 0 {
+        return err(usage_text(), 2)
+    }
+
+    parser := arg_parser()
+    parser := parser.add_argument("--task", "type", "string", "required", true)
+    parser := parser.add_argument("--out", "type", "string", "default", "")
+    parser := parser.add_argument("--budget", "type", "int", "default", "12000")
+    parser := parser.add_argument("--target", "type", "string", "default", "codex")
+    parser := parser.add_argument("--include", "type", "string", "default", "")
+    parser := parser.add_argument("--exclude", "type", "string", "default", "")
+    parser := parser.add_argument("--changed", "type", "bool")
+    parser := parser.add_argument("--staged", "type", "bool")
+    parser := parser.add_argument("--unstaged", "type", "bool")
+    parser := parser.add_argument("--max-files", "type", "int", "default", "40")
+    parser := parser.add_argument("--max-file-bytes", "type", "int", "default", "50000")
+    parser := parser.add_argument("--format", "type", "string", "default", "both")
+    parser := parser.add_argument("--verbose", "type", "bool")
+    parser := parser.add_argument("--json", "type", "bool")
+    parser := parser.add_argument("--dry-run", "type", "bool")
+
+    parsed := null
+    try {
+        parsed = parser.parse()
+    } except parse_error {
+        return err(usage_text() + "\n\n" + to_string(parse_error), 2)
+    }
+
+    positionals := []
+    if has_key(parsed, "_positional") && parsed["_positional"] != null {
+        positionals = parsed["_positional"]
+    }
+
+    if len(positionals) > 1 {
+        return err("expected a single subcommand: pack", 2)
+    }
+    if len(positionals) == 1 {
+        cmd := positionals[0]
+        if cmd == "help" {
+            return err(usage_text(), 2)
+        }
+        if cmd == "--help" {
+            return err(usage_text(), 2)
+        }
+        if cmd == "-h" {
+            return err(usage_text(), 2)
+        }
+        if cmd != "pack" {
+            return err("unknown command: " + cmd + "\n\n" + usage_text(), 2)
+        }
+    }
+
+    opts := defaults()
+    opts["task"] = to_string(parsed["task"])
+    out_raw := to_string(parsed["out"])
+    if trim(out_raw) == "" {
+        opts["out"] = null
+    } else {
+        opts["out"] = out_raw
+    }
+    opts["budget"] = to_int(parsed["budget"])
+    opts["target"] = to_string(parsed["target"])
+    opts["changed"] = parsed["changed"]
+    opts["staged"] = parsed["staged"]
+    opts["unstaged"] = parsed["unstaged"]
+    opts["max_files"] = to_int(parsed["max-files"])
+    opts["max_file_bytes"] = to_int(parsed["max-file-bytes"])
+    opts["format"] = to_string(parsed["format"])
+    opts["verbose"] = parsed["verbose"]
+    opts["json_stdout"] = parsed["json"]
+    opts["dry_run"] = parsed["dry-run"]
+
+    include_raw := to_string(parsed["include"])
+    if trim(include_raw) != "" {
+        opts["include"] = push(opts["include"], include_raw)
+    }
+    exclude_raw := to_string(parsed["exclude"])
+    if trim(exclude_raw) != "" {
+        opts["exclude"] = push(opts["exclude"], exclude_raw)
+    }
+
+    if trim(to_string(opts["task"])) == "" {
+        return err("--task is required", 2)
+    }
+    budget_value := to_int(opts["budget"])
+    max_files_value := to_int(opts["max_files"])
+    max_file_bytes_value := to_int(opts["max_file_bytes"])
+    opts["budget"] = budget_value
+    opts["max_files"] = max_files_value
+    opts["max_file_bytes"] = max_file_bytes_value
+
+    if budget_value <= 0 {
+        return err("--budget must be greater than 0", 2)
+    }
+    if max_files_value <= 0 {
+        return err("--max-files must be greater than 0", 2)
+    }
+    if max_file_bytes_value <= 0 {
+        return err("--max-file-bytes must be greater than 0", 2)
+    }
+
+    allowed_targets := {"codex": 1, "claude": 1, "deepseek": 1, "generic": 1}
+    if has_key(allowed_targets, opts["target"]) == 0 {
+        return err("--target must be one of: codex, claude, deepseek, generic", 2)
+    }
+
+    allowed_formats := {"md": 1, "json": 1, "both": 1}
+    if has_key(allowed_formats, opts["format"]) == 0 {
+        return err("--format must be one of: md, json, both", 2)
+    }
+
+    return ok(opts)
+}
+
+func is_absolute(path) {
+    return starts_with(path, "/")
+}
+
+func resolve_path(base, path) {
+    if is_absolute(path) {
+        return path
+    }
+    return path_join(base, path)
+}
+
+func path_rel(root, full) {
+    prefix := root + "/"
+    if starts_with(full, prefix) {
+        return substring(full, len(prefix), len(full))
+    }
+    if full == root {
+        return "."
+    }
+    return full
+}
+
+func detect_repo_root(start) {
+    current := start
+    previous := ""
+
+    while current != previous {
+        git_dir := path_join(current, ".git")
+        if path_exists(git_dir) {
+            return current
+        }
+        previous = current
+        current = dirname(current)
+    }
+
+    return start
+}
+
+func estimate_tokens(text) {
+    chars := len(text)
+    return (chars + 3) / 4
+}
+
+func tokenize_task(task) {
+    tokens := []
+    seen := {}
+
+    parts := regex_split(lower(task), "[^a-z0-9_-]+")
+    i := 0
+    while i < len(parts) {
+        part := parts[i]
+        p := trim(part)
+        if len(p) > 2 && has_key(seen, p) == 0 {
+            seen[p] = 1
+            tokens = push(tokens, p)
+        }
+        i = i + 1
+    }
+
+    return tokens
+}
+
+func discover_instruction_files(repo_root) {
+    candidates := [
+        "AGENTS.md",
+        "AGENTS.override.md",
+        "CLAUDE.md",
+        "README.md",
+        "CONTRIBUTING.md",
+        "docs/README.md"
+    ]
+    found := []
+
+    i := 0
+    while i < len(candidates) {
+        rel := candidates[i]
+        full := path_join(repo_root, rel)
+        if path_exists(full) && path_is_file(full) {
+            found = push(found, full)
+        }
+        i = i + 1
+    }
+
+    return found
+}
+
+func run_process(args) {
+    parts := []
+    i := 0
+    while i < len(args) {
+        parts = push(parts, shell_quote(args[i]))
+        i = i + 1
+    }
+    cmd := join(parts, " ")
+
+    try {
+        return execute_status(cmd)
+    } except e {
+        return {
+            "success": false,
+            "exitcode": 127,
+            "stdout": "",
+            "stderr": to_string(e),
+            "timed_out": false,
+            "stdout_truncated": false,
+            "stderr_truncated": false
+        }
+    }
+}
+
+func split_lines(text) {
+    lines := split(text, "\n")
+    out := []
+    i := 0
+    while i < len(lines) {
+        line := lines[i]
+        t := trim(line)
+        if len(t) > 0 {
+            out = push(out, t)
+        }
+        i = i + 1
+    }
+    return out
+}
+
+func push_unique(items, seen, value) {
+    if value == "" {
+        return items
+    }
+    if has_key(seen, value) == 0 {
+        seen[value] = 1
+        items = push(items, value)
+    }
+    return items
+}
+
+func inspect_git(repo_root) {
+    result := {
+        "available": false,
+        "branch": "unknown",
+        "commit": "unknown",
+        "dirty": false,
+        "staged_files": [],
+        "unstaged_files": [],
+        "untracked_files": [],
+        "changed_files": [],
+        "diff_summary": []
+    }
+
+    staged_res := run_process(["git", "-C", repo_root, "diff", "--name-only", "--cached"])
+    if !staged_res.success {
+        return result
+    }
+
+    unstaged_res := run_process(["git", "-C", repo_root, "diff", "--name-only"])
+    if !unstaged_res.success {
+        return result
+    }
+
+    untracked_res := run_process(["git", "-C", repo_root, "ls-files", "--others", "--exclude-standard"])
+    if !untracked_res.success {
+        return result
+    }
+
+    result["available"] = true
+
+    branch_res := run_process(["git", "-C", repo_root, "rev-parse", "--abbrev-ref", "HEAD"])
+    if branch_res.success {
+        branch := trim(to_string(branch_res.stdout))
+        if branch != "" {
+            result["branch"] = branch
+        }
+    }
+
+    commit_res := run_process(["git", "-C", repo_root, "rev-parse", "--short", "HEAD"])
+    if commit_res.success {
+        commit := trim(to_string(commit_res.stdout))
+        if commit != "" {
+            result["commit"] = commit
+        }
+    }
+
+    staged_seen := {}
+    unstaged_seen := {}
+    untracked_seen := {}
+    changed_seen := {}
+
+    staged_files := split_lines(to_string(staged_res.stdout))
+    unstaged_files := split_lines(to_string(unstaged_res.stdout))
+    untracked_files := split_lines(to_string(untracked_res.stdout))
+
+    idx := 0
+    while idx < len(staged_files) {
+        path := trim(staged_files[idx])
+        idx = idx + 1
+        if path == "" {
+            continue
+        }
+        result["staged_files"] = push_unique(result["staged_files"], staged_seen, path)
+        result["changed_files"] = push_unique(result["changed_files"], changed_seen, path)
+        result["diff_summary"] = push(result["diff_summary"], "staged: " + path)
+    }
+
+    idx := 0
+    while idx < len(unstaged_files) {
+        path := trim(unstaged_files[idx])
+        idx = idx + 1
+        if path == "" {
+            continue
+        }
+        result["unstaged_files"] = push_unique(result["unstaged_files"], unstaged_seen, path)
+        result["changed_files"] = push_unique(result["changed_files"], changed_seen, path)
+        result["diff_summary"] = push(result["diff_summary"], "unstaged: " + path)
+    }
+
+    idx = 0
+    while idx < len(untracked_files) {
+        path := trim(untracked_files[idx])
+        idx = idx + 1
+        if path == "" {
+            continue
+        }
+        result["untracked_files"] = push_unique(result["untracked_files"], untracked_seen, path)
+        result["changed_files"] = push_unique(result["changed_files"], changed_seen, path)
+        result["diff_summary"] = push(result["diff_summary"], "untracked: " + path)
+    }
+
+    if len(result["staged_files"]) > 0 || len(result["unstaged_files"]) > 0 || len(result["untracked_files"]) > 0 {
+        result["dirty"] = true
+    }
+
+    return result
+}
+
+func is_ignored_dir(name) {
+    ignored := {
+        ".git": 1,
+        ".scent": 1,
+        "node_modules": 1,
+        "vendor": 1,
+        "out": 1,
+        "dist": 1,
+        "build": 1,
+        "target": 1
+    }
+    return has_key(ignored, name)
+}
+
+func is_binary_extension(path) {
+    ext := lower(path_extension(path))
+    binary_exts := {
+        "png": 1,
+        "jpg": 1,
+        "jpeg": 1,
+        "gif": 1,
+        "webp": 1,
+        "pdf": 1,
+        "zip": 1,
+        "gz": 1,
+        "tar": 1,
+        "bz2": 1,
+        "xz": 1,
+        "mp3": 1,
+        "mp4": 1,
+        "mov": 1,
+        "avi": 1,
+        "so": 1,
+        "dll": 1,
+        "dylib": 1,
+        "exe": 1,
+        "bin": 1,
+        "db": 1,
+        "sqlite": 1,
+        "class": 1
+    }
+    return has_key(binary_exts, ext)
+}
+
+func should_skip_file(path) {
+    name := basename(path)
+    if starts_with(name, ".env") {
+        return true
+    }
+    return is_binary_extension(path)
+}
+
+func is_instruction_rel(rel) {
+    return rel == "AGENTS.md" || rel == "AGENTS.override.md" || rel == "CLAUDE.md" || rel == "README.md" || rel == "CONTRIBUTING.md" || rel == "docs/README.md"
+}
+
+func is_doc_rel(rel) {
+    return ends_with(lower(rel), ".md") || starts_with(lower(rel), "docs/")
+}
+
+func is_test_rel(rel) {
+    lower_rel := lower(rel)
+    return starts_with(lower_rel, "tests/") || contains(lower_rel, "/tests/") || ends_with(lower_rel, "_test.rs") || ends_with(lower_rel, "_test.py") || ends_with(lower_rel, ".test.ts") || ends_with(lower_rel, ".spec.ts") || ends_with(lower_rel, "_test.kujo")
+}
+
+func is_config_rel(rel) {
+    exact := {
+        "Cargo.toml": 1,
+        "Cargo.lock": 1,
+        "package.json": 1,
+        "pnpm-lock.yaml": 1,
+        "yarn.lock": 1,
+        "package-lock.json": 1,
+        "pyproject.toml": 1,
+        "setup.cfg": 1,
+        "setup.py": 1,
+        "Makefile": 1,
+        "justfile": 1,
+        "Justfile": 1,
+        "tsconfig.json": 1,
+        "kujo.toml": 1
+    }
+    if has_key(exact, rel) {
+        return true
+    }
+    lower_rel := lower(rel)
+    return ends_with(lower_rel, ".toml") || ends_with(lower_rel, ".yaml") || ends_with(lower_rel, ".yml") || ends_with(lower_rel, ".json")
+}
+
+func path_is_excluded(full, exclude_abs) {
+    i := 0
+    while i < len(exclude_abs) {
+        ex := exclude_abs[i]
+        if full == ex || starts_with(full, ex + "/") {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+func read_text_file(path) {
+    try {
+        content := read_file(path)
+        return {"ok": true, "content": content}
+    } except e {
+        return {"ok": false, "error": to_string(e)}
+    }
+}
+
+func walk_collect(repo_root, current, max_candidates, visited_dirs, depth) {
+    files := []
+    if max_candidates <= 0 {
+        return files
+    }
+    if depth > 20 {
+        return files
+    }
+
+    if has_key(visited_dirs, current) == 1 {
+        return files
+    }
+    visited_dirs[current] = 1
+
+    entries := []
+    try {
+        entries = list_dir(current)
+    } except e {
+        return files
+    }
+
+    idx := 0
+    while idx < len(entries) {
+        name := entries[idx]
+        idx = idx + 1
+
+        if len(files) >= max_candidates {
+            break
+        }
+
+        if name == "." {
+            continue
+        }
+        if name == ".." {
+            continue
+        }
+
+        if is_ignored_dir(name) {
+            continue
+        }
+
+        full := path_join(current, name)
+        if path_is_dir(full) {
+            remaining := max_candidates - len(files)
+            child_files := walk_collect(repo_root, full, remaining, visited_dirs, depth + 1)
+            child_idx := 0
+            while child_idx < len(child_files) {
+                files = push(files, child_files[child_idx])
+                child_idx = child_idx + 1
+                if len(files) >= max_candidates {
+                    break
+                }
+            }
+        } else if path_is_file(full) {
+            files = push(files, full)
+        }
+    }
+
+    return files
+}
+
+func collect_candidates(repo_root, git_info, instruction_files, includes, excludes, task_terms) {
+    visited_dirs := {}
+    all_paths := walk_collect(repo_root, repo_root, 2000, visited_dirs, 0)
+
+    i := 0
+    while i < len(includes) {
+        inc := includes[i]
+        inc_abs := resolve_path(repo_root, inc)
+        if path_exists(inc_abs) {
+            if path_is_file(inc_abs) {
+                all_paths = push(all_paths, inc_abs)
+            } else if path_is_dir(inc_abs) {
+                include_paths := walk_collect(repo_root, inc_abs, 2000, visited_dirs, 0)
+                add_idx := 0
+                while add_idx < len(include_paths) {
+                    all_paths = push(all_paths, include_paths[add_idx])
+                    add_idx = add_idx + 1
+                }
+            }
+        }
+        i = i + 1
+    }
+
+    instruction_rel := {}
+    i = 0
+    while i < len(instruction_files) {
+        inst := instruction_files[i]
+        instruction_rel[path_rel(repo_root, inst)] = 1
+        i = i + 1
+    }
+
+    changed_map := {}
+    i = 0
+    while i < len(git_info["changed_files"]) {
+        p := git_info["changed_files"][i]
+        changed_map[p] = 1
+        i = i + 1
+    }
+    staged_map := {}
+    i = 0
+    while i < len(git_info["staged_files"]) {
+        p := git_info["staged_files"][i]
+        staged_map[p] = 1
+        i = i + 1
+    }
+    unstaged_map := {}
+    i = 0
+    while i < len(git_info["unstaged_files"]) {
+        p := git_info["unstaged_files"][i]
+        unstaged_map[p] = 1
+        i = i + 1
+    }
+
+    exclude_abs := []
+    i = 0
+    while i < len(excludes) {
+        ex := excludes[i]
+        exclude_abs = push(exclude_abs, resolve_path(repo_root, ex))
+        i = i + 1
+    }
+
+    seen := {}
+    candidates := []
+
+    i = 0
+    while i < len(all_paths) {
+        full := all_paths[i]
+        i = i + 1
+
+        if !path_is_file(full) {
+            continue
+        }
+        if should_skip_file(full) {
+            continue
+        }
+        if path_is_excluded(full, exclude_abs) {
+            continue
+        }
+
+        rel := path_rel(repo_root, full)
+        if has_key(seen, rel) {
+            continue
+        }
+        seen[rel] = 1
+
+        matched_terms := []
+        rel_lower := lower(rel)
+        j := 0
+        while j < len(task_terms) {
+            term := task_terms[j]
+            if contains(rel_lower, term) {
+                matched_terms = push(matched_terms, term)
+            }
+            j = j + 1
+        }
+
+        size := to_int_safe(file_size(full), 0)
+
+        candidates = push(candidates, {
+            "path": full,
+            "rel_path": rel,
+            "size_bytes": size,
+            "is_changed": has_key(changed_map, rel),
+            "is_staged": has_key(staged_map, rel),
+            "is_unstaged": has_key(unstaged_map, rel),
+            "is_instruction": has_key(instruction_rel, rel),
+            "is_doc": is_doc_rel(rel),
+            "is_test": is_test_rel(rel),
+            "is_config": is_config_rel(rel),
+            "matched_terms": matched_terms,
+            "selected": false,
+            "selection_reason": ""
+        })
+    }
+
+    return candidates
+}
+
+func explicit_include_match(rel, includes, repo_root) {
+    i := 0
+    while i < len(includes) {
+        inc := includes[i]
+        inc_rel := inc
+        if is_absolute(inc_rel) {
+            inc_rel = path_rel(repo_root, inc_rel)
+        }
+
+        if rel == inc_rel || starts_with(rel, inc_rel + "/") {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+func score_candidate(c, opts, repo_root) {
+    score := 0
+    reasons := []
+
+    if c["is_instruction"] {
+        score = score + 120
+        reasons = push(reasons, "instruction file")
+    }
+
+    if explicit_include_match(c["rel_path"], opts["include"], repo_root) {
+        score = score + 200
+        reasons = push(reasons, "explicit include")
+    }
+
+    if opts["changed"] && c["is_changed"] {
+        score = score + 110
+        reasons = push(reasons, "changed file")
+    }
+
+    if opts["staged"] && c["is_staged"] {
+        score = score + 95
+        reasons = push(reasons, "staged file")
+    }
+
+    if opts["unstaged"] && c["is_unstaged"] {
+        score = score + 90
+        reasons = push(reasons, "unstaged file")
+    }
+
+    if len(c["matched_terms"]) > 0 {
+        score = score + (len(c["matched_terms"]) * 20)
+        reasons = push(reasons, "task-term match")
+    }
+
+    if c["is_config"] {
+        score = score + 12
+        reasons = push(reasons, "config/build file")
+    }
+
+    if c["is_doc"] {
+        score = score + 10
+        reasons = push(reasons, "docs/readme")
+    }
+
+    if c["is_test"] {
+        score = score + 15
+        reasons = push(reasons, "test file")
+    }
+
+    reason := ""
+    if len(reasons) > 0 {
+        reason = join(reasons, ", ")
+    } else {
+        reason = "did not meet selection threshold"
+    }
+
+    return {"score": score, "reason": reason}
+}
+
+func sort_scored(scored) {
+    n := len(scored)
+    i := 0
+    while i < n {
+        j := i + 1
+        while j < n {
+            left := scored[i]
+            right := scored[j]
+            swap := false
+            if right["score"] > left["score"] {
+                swap = true
+            } else if right["score"] == left["score"] && right["candidate"]["rel_path"] < left["candidate"]["rel_path"] {
+                swap = true
+            }
+
+            if swap {
+                tmp := scored[i]
+                scored[i] = scored[j]
+                scored[j] = tmp
+            }
+            j = j + 1
+        }
+        i = i + 1
+    }
+    return scored
+}
+
+func file_stem(path) {
+    name := basename(path)
+    if contains(name, ".") {
+        parts := split(name, ".")
+        if len(parts) > 1 {
+            return parts[0]
+        }
+    }
+    return name
+}
+
+func looks_like_pair(source_rel, test_rel) {
+    lhs := lower(file_stem(source_rel))
+    rhs := lower(file_stem(test_rel))
+    if lhs == rhs {
+        return true
+    }
+    if contains(rhs, lhs) || contains(lhs, rhs) {
+        return true
+    }
+    if contains(test_rel, "tests") {
+        lhs2 := replace(lhs, "_test", "")
+        rhs2 := replace(rhs, "_test", "")
+        if contains(rhs, lhs2) || contains(lhs, rhs2) {
+            return true
+        }
+    }
+    return false
+}
+
+func select_candidates(opts, repo_root, candidates) {
+    scored := []
+    i := 0
+    while i < len(candidates) {
+        c := candidates[i]
+        sr := score_candidate(c, opts, repo_root)
+        if sr["score"] > 0 {
+            scored = push(scored, {"score": sr["score"], "reason": sr["reason"], "candidate": c})
+        }
+        i = i + 1
+    }
+
+    scored = sort_scored(scored)
+
+    selected := []
+    seen := {}
+    max_files := to_int(opts["max_files"])
+
+    i = 0
+    while i < len(scored) {
+        if to_int(len(selected)) >= to_int(max_files) {
+            break
+        }
+        s := scored[i]
+        c := s["candidate"]
+        rel := c["rel_path"]
+        if has_key(seen, rel) {
+            i = i + 1
+            continue
+        }
+        seen[rel] = 1
+        c["selected"] = true
+        c["selection_reason"] = s["reason"]
+        selected = push(selected, c)
+        i = i + 1
+    }
+
+    sources := []
+    i = 0
+    while i < len(selected) {
+        c := selected[i]
+        if !c["is_test"] {
+            sources = push(sources, c["rel_path"])
+        }
+        i = i + 1
+    }
+
+    i = 0
+    while i < len(candidates) {
+        if to_int(len(selected)) >= to_int(max_files) {
+            break
+        }
+        c := candidates[i]
+        if !c["is_test"] {
+            i = i + 1
+            continue
+        }
+        if has_key(seen, c["rel_path"]) {
+            i = i + 1
+            continue
+        }
+
+        matched := false
+        j := 0
+        while j < len(sources) {
+            src := sources[j]
+            if looks_like_pair(src, c["rel_path"]) {
+                matched = true
+                break
+            }
+            j = j + 1
+        }
+
+        if matched {
+            seen[c["rel_path"]] = 1
+            c["selected"] = true
+            c["selection_reason"] = "nearby test for selected source"
+            selected = push(selected, c)
+        }
+        i = i + 1
+    }
+
+    if len(selected) == 0 {
+        i = 0
+        while i < len(candidates) {
+            if to_int(len(selected)) >= to_int(max_files) || to_int(len(selected)) >= 3 {
+                break
+            }
+            c := candidates[i]
+            rel := c["rel_path"]
+            if has_key(seen, rel) {
+                i = i + 1
+                continue
+            }
+            seen[rel] = 1
+            c["selected"] = true
+            c["selection_reason"] = "fallback baseline selection"
+            selected = push(selected, c)
+            i = i + 1
+        }
+    }
+
+    return selected
+}
+
+func clip_text(content, limit_bytes) {
+    if len(content) <= limit_bytes {
+        return {"content": content, "truncated": false}
+    }
+    return {"content": substring(content, 0, limit_bytes), "truncated": true}
+}
+
+func redact_text(file, content) {
+    redactions := []
+    text := to_string(content)
+    lines := split(text, "\n")
+    out := []
+    in_private_key := false
+
+    idx := 0
+    while idx < len(lines) {
+        line := lines[idx]
+        line_no := idx + 1
+        lower_line := lower(line)
+
+        if contains(line, "-----BEGIN") && contains(line, "PRIVATE KEY-----") {
+            in_private_key = true
+            out = push(out, "[REDACTED:PRIVATE_KEY]")
+            redactions = push(redactions, {"file": file, "line": line_no, "redaction_type": "private_key", "placeholder": "[REDACTED:PRIVATE_KEY]"})
+            idx = idx + 1
+            continue
+        }
+
+        if in_private_key {
+            if contains(line, "-----END") && contains(line, "PRIVATE KEY-----") {
+                in_private_key = false
+            }
+            idx = idx + 1
+            continue
+        }
+
+        if contains(lower_line, "authorization:") {
+            out = push(out, "authorization: [REDACTED:TOKEN]")
+            redactions = push(redactions, {"file": file, "line": line_no, "redaction_type": "authorization_header", "placeholder": "[REDACTED:TOKEN]"})
+            idx = idx + 1
+            continue
+        }
+
+        secret_line := false
+        placeholder := ""
+        redaction_type := ""
+
+        patterns := [
+            ["api_key", "[REDACTED:API_KEY]", "api_key"],
+            ["apikey", "[REDACTED:API_KEY]", "api_key"],
+            ["access_token", "[REDACTED:TOKEN]", "access_token"],
+            ["refresh_token", "[REDACTED:TOKEN]", "refresh_token"],
+            ["session_token", "[REDACTED:TOKEN]", "session_token"],
+            ["password", "[REDACTED:PASSWORD]", "password"],
+            ["passwd", "[REDACTED:PASSWORD]", "password"],
+            ["secret", "[REDACTED:SECRET]", "secret"],
+            ["token", "[REDACTED:TOKEN]", "token"],
+            ["cookie", "[REDACTED:TOKEN]", "cookie"],
+            ["webhook", "[REDACTED:SECRET]", "webhook"]
+        ]
+
+        p_idx := 0
+        while p_idx < len(patterns) {
+            p := patterns[p_idx]
+            if contains(lower_line, p[0]) && (contains(line, "=") || contains(line, ":")) && contains(lower_line, "redacted") == 0 {
+                secret_line = true
+                placeholder = p[1]
+                redaction_type = p[2]
+                break
+            }
+            p_idx = p_idx + 1
+        }
+
+        if secret_line {
+            if contains(line, "=") {
+                eq_parts := split(line, "=")
+                key := eq_parts[0] + "="
+                out = push(out, key + placeholder)
+            } else if contains(line, ":") {
+                colon_parts := split(line, ":")
+                key := colon_parts[0] + ":"
+                out = push(out, key + " " + placeholder)
+            } else {
+                out = push(out, placeholder)
+            }
+            redactions = push(redactions, {"file": file, "line": line_no, "redaction_type": redaction_type, "placeholder": placeholder})
+            idx = idx + 1
+            continue
+        }
+
+        if regex_match(line, "[A-Za-z0-9_-]{8,}[.][A-Za-z0-9_-]{8,}[.][A-Za-z0-9_-]{8,}") {
+            redacted_line := regex_replace_all(line, "[A-Za-z0-9_-]{8,}[.][A-Za-z0-9_-]{8,}[.][A-Za-z0-9_-]{8,}", "[REDACTED:TOKEN]")
+            out = push(out, redacted_line)
+            redactions = push(redactions, {"file": file, "line": line_no, "redaction_type": "jwt", "placeholder": "[REDACTED:TOKEN]"})
+            idx = idx + 1
+            continue
+        }
+
+        out = push(out, line)
+        idx = idx + 1
+    }
+
+    return {"content": join(out, "\n"), "redactions": redactions}
+}
+
+func reserved_tokens(task) {
+    return 1400 + estimate_tokens(task)
+}
+
+func apply_budget(budget, reserved, selected_files) {
+    budget_for_files := budget - reserved
+    if budget_for_files < 0 {
+        budget_for_files = 0
+    }
+
+    manifest := []
+    included := []
+    used := 0
+
+    i := 0
+    while i < len(selected_files) {
+        item := selected_files[i]
+        if used + item["estimated_tokens"] <= budget_for_files {
+            decision := "include"
+            if item["truncated"] {
+                decision = "truncate"
+            }
+            manifest = push(manifest, {
+                "path": item["path"],
+                "type": "file",
+                "decision": decision,
+                "reason": item["reason"],
+                "score": item["score"],
+                "size_bytes": item["size_bytes"],
+                "estimated_tokens": item["estimated_tokens"]
+            })
+            used = used + item["estimated_tokens"]
+            included = push(included, item)
+            i = i + 1
+            continue
+        }
+
+        remaining := budget_for_files - used
+        if remaining > 120 {
+            char_budget := remaining * 4
+            if char_budget < 0 {
+                char_budget = 0
+            }
+            item["content"] = substring(item["content"], 0, char_budget)
+            item["truncated"] = true
+            item["estimated_tokens"] = estimate_tokens(item["content"])
+            item["content_hash"] = sha256(item["content"])
+
+            if item["estimated_tokens"] <= remaining {
+                used = used + item["estimated_tokens"]
+                manifest = push(manifest, {
+                    "path": item["path"],
+                    "type": "file",
+                    "decision": "truncate",
+                    "reason": "truncated to fit budget; " + item["reason"],
+                    "score": item["score"],
+                    "size_bytes": item["size_bytes"],
+                    "estimated_tokens": item["estimated_tokens"]
+                })
+                included = push(included, item)
+                i = i + 1
+                continue
+            }
+        }
+
+        manifest = push(manifest, {
+            "path": item["path"],
+            "type": "file",
+            "decision": "exclude",
+            "reason": "excluded due to budget; " + item["reason"],
+            "score": item["score"],
+            "size_bytes": item["size_bytes"],
+            "estimated_tokens": item["estimated_tokens"]
+        })
+        i = i + 1
+    }
+
+    return {"files": included, "manifest": manifest}
+}
+
+func discover_commands(repo_root) {
+    commands := []
+
+    if path_exists(path_join(repo_root, "Cargo.toml")) {
+        commands = push(commands, "cargo test")
+        commands = push(commands, "cargo fmt -- --check")
+    }
+
+    package_path := path_join(repo_root, "package.json")
+    if path_exists(package_path) {
+        pkg_read := read_text_file(package_path)
+        if pkg_read["ok"] {
+            parsed := null
+            parse_ok := false
+            try {
+                parsed = parse_json(pkg_read["content"])
+                parse_ok = true
+            } except parse_error {
+                parse_ok = false
+            }
+
+            if parse_ok && type(parsed) == "Dict" && has_key(parsed, "scripts") {
+                scripts := parsed["scripts"]
+                if type(scripts) == "Dict" {
+                    if has_key(scripts, "test") {
+                        commands = push(commands, "npm test")
+                    }
+                    if has_key(scripts, "lint") {
+                        commands = push(commands, "npm run lint")
+                    }
+                    if has_key(scripts, "build") {
+                        commands = push(commands, "npm run build")
+                    }
+                }
+            }
+        }
+    }
+
+    makefile_path := path_join(repo_root, "Makefile")
+    if path_exists(makefile_path) {
+        mf := read_text_file(makefile_path)
+        if mf["ok"] {
+            make_lines := split(mf["content"], "\n")
+            i := 0
+            while i < len(make_lines) {
+                make_line := make_lines[i]
+                if starts_with(make_line, "test:") {
+                    commands = push(commands, "make test")
+                }
+                if starts_with(make_line, "build:") {
+                    commands = push(commands, "make build")
+                }
+                if starts_with(make_line, "lint:") {
+                    commands = push(commands, "make lint")
+                }
+                i = i + 1
+            }
+        }
+    }
+
+    justfile_path := path_join(repo_root, "justfile")
+    if !path_exists(justfile_path) {
+        justfile_path = path_join(repo_root, "Justfile")
+    }
+    if path_exists(justfile_path) {
+        jf := read_text_file(justfile_path)
+        if jf["ok"] {
+            just_lines := split(jf["content"], "\n")
+            j := 0
+            while j < len(just_lines) {
+                just_line := just_lines[j]
+                if starts_with(just_line, "test:") {
+                    commands = push(commands, "just test")
+                }
+                if starts_with(just_line, "build:") {
+                    commands = push(commands, "just build")
+                }
+                if starts_with(just_line, "lint:") {
+                    commands = push(commands, "just lint")
+                }
+                j = j + 1
+            }
+        }
+    }
+
+    # dedupe + sort
+    seen := {}
+    uniq := []
+    k := 0
+    while k < len(commands) {
+        c := commands[k]
+        if has_key(seen, c) == 0 {
+            seen[c] = 1
+            uniq = push(uniq, c)
+        }
+        k = k + 1
+    }
+    sort(uniq)
+    return uniq
+}
+
+func target_notes(target) {
+    if target == "codex" {
+        return "Codex usage notes:\n- Follow AGENTS.md/project instructions first.\n- Use this pack as bounded context.\n- Run detected tests after changes.\n- Do not modify files outside the task scope unless necessary."
+    }
+    if target == "claude" {
+        return "Usage notes:\n- Follow project instructions first.\n- Use this pack as bounded context.\n- Run detected tests after changes.\n- Avoid changes outside task scope unless needed."
+    }
+    if target == "deepseek" {
+        return "Implementation notes:\n- Treat this as bounded task context.\n- Prefer minimal diff and deterministic changes.\n- Run detected tests before handoff."
+    }
+    return "Usage notes:\n- Use this pack as bounded task context.\n- Follow project instructions and constraints.\n- Validate with detected commands before handoff."
+}
+
+func markdown_section_list(title, items, empty_line) {
+    out := "## " + title + "\n\n"
+    if len(items) == 0 {
+        out = out + empty_line + "\n\n"
+        return out
+    }
+    i := 0
+    while i < len(items) {
+        item := items[i]
+        out = out + "- " + item + "\n"
+        i = i + 1
+    }
+    out = out + "\n"
+    return out
+}
+
+func build_markdown(task, target, budget, generated_at, repo_root, git_info, instruction_files, selected_files, changed_files, commands, constraints, excluded_manifest, redactions, manifest, estimated_tokens) {
+    out := "# Scent Context Pack\n\n"
+    out = out + "Task: " + task + "\n\n"
+    out = out + "Target Agent: " + target + "\n\n"
+    out = out + "Budget: " + to_string(budget) + "\n\n"
+    out = out + "Generated: " + generated_at + "\n\n"
+    out = out + "Repository: " + repo_root + "\n\n"
+    out = out + "Git Branch: " + git_info["branch"] + "\n\n"
+
+    status_summary := "dirty=" + to_string(git_info["dirty"]) + " staged=" + to_string(len(git_info["staged_files"])) + " unstaged=" + to_string(len(git_info["unstaged_files"])) + " untracked=" + to_string(len(git_info["untracked_files"]))
+    out = out + "Git Status Summary: " + status_summary + "\n\n"
+
+    out = out + "## How To Use This Pack\n\n"
+    out = out + "Use this context as the bounded task context.\n"
+    out = out + "Do not assume omitted files are irrelevant if tests or errors point elsewhere.\n"
+    out = out + "Follow project instructions first.\n"
+    out = out + "Respect the constraints and guardrails.\n"
+    out = out + "Run the listed validation commands when making changes.\n\n"
+    out = out + target_notes(target) + "\n\n"
+
+    inst_rel := []
+    idx := 0
+    while idx < len(instruction_files) {
+        inst_path := instruction_files[idx]
+        inst_rel = push(inst_rel, path_rel(repo_root, inst_path))
+        idx = idx + 1
+    }
+    out = out + markdown_section_list("Project Instructions", inst_rel, "No instruction files discovered.")
+
+    out = out + "## Task-Relevant Files\n\n"
+    idx = 0
+    while idx < len(selected_files) {
+        f := selected_files[idx]
+        out = out + "- " + f["path"] + " (" + f["reason"] + ", " + to_string(f["estimated_tokens"]) + " tokens)\n"
+        idx = idx + 1
+    }
+    out = out + "\n"
+
+    out = out + markdown_section_list("Changed Files", changed_files, "No changed files detected.")
+
+    test_commands := []
+    build_commands := []
+    idx = 0
+    while idx < len(commands) {
+        c := commands[idx]
+        if contains(c, "test") {
+            test_commands = push(test_commands, "`" + c + "`")
+        } else {
+            build_commands = push(build_commands, "`" + c + "`")
+        }
+        idx = idx + 1
+    }
+    out = out + markdown_section_list("Tests And Validation Commands", test_commands, "No validation commands were confidently detected.")
+    out = out + markdown_section_list("Build/Run Commands", build_commands, "No build/run commands were confidently detected.")
+
+    out = out + "## Constraints And Guardrails\n\n"
+    idx = 0
+    while idx < len(constraints) {
+        c := constraints[idx]
+        out = out + "- " + c + "\n"
+        idx = idx + 1
+    }
+    out = out + "\n"
+
+    out = out + "## Included File Summaries\n\n"
+    idx = 0
+    while idx < len(selected_files) {
+        f := selected_files[idx]
+        out = out + "- " + f["path"] + ": reason=" + f["reason"] + ", size_bytes=" + to_string(f["size_bytes"]) + ", estimated_tokens=" + to_string(f["estimated_tokens"]) + "\n"
+        idx = idx + 1
+    }
+    out = out + "\n"
+
+    out = out + "## Included File Contents\n\n"
+    idx = 0
+    while idx < len(selected_files) {
+        f := selected_files[idx]
+        out = out + "### " + f["path"] + "\n\n"
+        out = out + "```text\n"
+        out = out + f["content"]
+        if !ends_with(f["content"], "\n") {
+            out = out + "\n"
+        }
+        out = out + "```\n\n"
+        idx = idx + 1
+    }
+
+    out = out + "## Excluded Or Truncated Content\n\n"
+    if len(excluded_manifest) == 0 {
+        out = out + "None.\n\n"
+    } else {
+        idx = 0
+        while idx < len(excluded_manifest) {
+            e := excluded_manifest[idx]
+            out = out + "- " + e["path"] + " [" + e["decision"] + "] reason=" + e["reason"] + "\n"
+            idx = idx + 1
+        }
+        out = out + "\n"
+    }
+
+    out = out + "## Redactions\n\n"
+    if len(redactions) == 0 {
+        out = out + "No redactions were required.\n\n"
+    } else {
+        idx = 0
+        while idx < len(redactions) {
+            r := redactions[idx]
+            line_text := "n/a"
+            if has_key(r, "line") {
+                line_text = to_string(r["line"])
+            }
+            out = out + "- file=" + r["file"] + " line=" + line_text + " type=" + r["redaction_type"] + " placeholder=" + r["placeholder"] + "\n"
+            idx = idx + 1
+        }
+        out = out + "\n"
+    }
+
+    out = out + "## Manifest Summary\n\n"
+    out = out + "Included files: " + to_string(len(selected_files)) + "\n\n"
+    out = out + "Estimated tokens: " + to_string(estimated_tokens) + " / " + to_string(budget) + "\n\n"
+
+    idx = 0
+    while idx < len(manifest) {
+        m := manifest[idx]
+        out = out + "- " + m["path"] + " => " + m["decision"] + " (" + m["reason"] + ", score=" + to_string(m["score"]) + ", tokens=" + to_string(m["estimated_tokens"]) + ")\n"
+        idx = idx + 1
+    }
+
+    return out
+}
+
+func ensure_dir(path) {
+    if path_exists(path) {
+        return true
+    }
+
+    parent := dirname(path)
+    if parent != path && !path_exists(parent) {
+        ensure_dir(parent)
+    }
+
+    result := create_dir(path)
+    if !result {
+        return false
+    }
+    return true
+}
+
+func write_text(path, content) {
+    parent := dirname(path)
+    if !ensure_dir(parent) {
+        return err("failed to create parent directory for " + path, 4)
+    }
+
+    wr := write_file(path, content)
+    if !wr {
+        return err("failed to write " + path, 4)
+    }
+    return ok(true)
+}
+
+func run_pack(opts, raw_flags) {
+    started := now()
+    cwd := os_getcwd()
+    repo_root := detect_repo_root(cwd)
+    git_info := inspect_git(repo_root)
+    instruction_files := discover_instruction_files(repo_root)
+    task_text := to_string(opts["task"])
+    budget_value := to_int(opts["budget"])
+    max_file_bytes_value := to_int(opts["max_file_bytes"])
+    target_value := to_string(opts["target"])
+    format_value := to_string(opts["format"])
+
+    task_terms := tokenize_task(task_text)
+
+    reserve := reserved_tokens(task_text)
+    if budget_value <= reserve {
+        return err("budget too small: " + to_string(budget_value) + ". minimum required is " + to_string(reserve + 1), 5)
+    }
+
+    warnings := []
+    if !git_info["available"] {
+        warnings = push(warnings, "git unavailable; running in degraded mode")
+    }
+
+    candidates := collect_candidates(repo_root, git_info, instruction_files, opts["include"], opts["exclude"], task_terms)
+    selected_candidates := select_candidates(opts, repo_root, candidates)
+
+    selected_files := []
+    redactions := []
+
+    loop_idx := 0
+    while loop_idx < len(selected_candidates) {
+        selected_candidate := selected_candidates[loop_idx]
+        read_res := read_text_file(selected_candidate["path"])
+        if !read_res["ok"] {
+            loop_idx = loop_idx + 1
+            continue
+        }
+
+        clipped := clip_text(read_res["content"], max_file_bytes_value)
+        redacted := redact_text(selected_candidate["rel_path"], clipped["content"])
+
+        red_idx := 0
+        while red_idx < len(redacted["redactions"]) {
+            redactions = push(redactions, redacted["redactions"][red_idx])
+            red_idx = red_idx + 1
+        }
+
+        content := redacted["content"]
+        selected_files = push(selected_files, {
+            "path": selected_candidate["rel_path"],
+            "reason": selected_candidate["selection_reason"],
+            "score": score_candidate(selected_candidate, opts, repo_root)["score"],
+            "size_bytes": selected_candidate["size_bytes"],
+            "estimated_tokens": estimate_tokens(content),
+            "included": true,
+            "truncated": clipped["truncated"],
+            "content": content,
+            "content_hash": sha256(content)
+        })
+        loop_idx = loop_idx + 1
+    }
+
+    budget_result := apply_budget(budget_value, reserve, selected_files)
+    included_files := budget_result["files"]
+    manifest := budget_result["manifest"]
+
+    if len(included_files) == 0 {
+        warnings = push(warnings, "no relevant files selected; output contains metadata only")
+    }
+
+    selected_map := {}
+    loop_idx = 0
+    while loop_idx < len(included_files) {
+        included_file := included_files[loop_idx]
+        selected_map[included_file["path"]] = 1
+        loop_idx = loop_idx + 1
+    }
+
+    loop_idx = 0
+    while loop_idx < len(candidates) {
+        candidate_item := candidates[loop_idx]
+        if has_key(selected_map, candidate_item["rel_path"]) {
+            candidate_item["selected"] = true
+            if candidate_item["selection_reason"] == "" {
+                candidate_item["selection_reason"] = "selected"
+            }
+        } else {
+            candidate_item["selected"] = false
+            if candidate_item["selection_reason"] == "" {
+                candidate_item["selection_reason"] = "not selected by deterministic relevance"
+            }
+            manifest = push(manifest, {
+                "path": candidate_item["rel_path"],
+                "type": "file",
+                "decision": "exclude",
+                "reason": candidate_item["selection_reason"],
+                "score": 0,
+                "size_bytes": candidate_item["size_bytes"],
+                "estimated_tokens": 0
+            })
+        }
+        loop_idx = loop_idx + 1
+    }
+
+    commands := discover_commands(repo_root)
+
+    constraints := [
+        "Keep scope tight and deterministic.",
+        "Do not assume omitted files are irrelevant if errors point elsewhere.",
+        "Avoid touching files outside the task scope unless necessary.",
+        "Do not include secrets in output artifacts."
+    ]
+
+    estimated_tokens := estimate_tokens(task_text) + 2
+    loop_idx = 0
+    while loop_idx < len(included_files) {
+        estimated_tokens = estimated_tokens + included_files[loop_idx]["estimated_tokens"]
+        loop_idx = loop_idx + 1
+    }
+
+    generated_at := "unix-" + to_string(to_int(now()))
+    stamp := "unix-" + to_string(to_int(now() * 1000))
+
+    out_dir := opts["out"]
+    if out_dir == null {
+        out_dir = path_join(path_join(path_join(repo_root, ".scent"), "packs"), stamp)
+    } else {
+        out_dir = resolve_path(cwd, out_dir)
+    }
+
+    artifact_names := []
+    if format_value == "md" || format_value == "both" {
+        artifact_names = push(artifact_names, "context.md")
+    }
+    if format_value == "json" || format_value == "both" {
+        artifact_names = push(artifact_names, "context.json")
+    }
+    artifact_names = push(artifact_names, "manifest.json")
+    artifact_names = push(artifact_names, "files.json")
+    artifact_names = push(artifact_names, "redactions.json")
+    artifact_names = push(artifact_names, "metadata.json")
+
+    loop_idx = 0
+    while loop_idx < len(artifact_names) {
+        art := artifact_names[loop_idx]
+        decision := "include"
+        reason := "generated artifact"
+        if opts["dry_run"] {
+            decision = "exclude"
+            reason = "dry-run; artifact not written"
+        }
+
+        manifest = push(manifest, {
+            "path": art,
+            "type": "artifact",
+            "decision": decision,
+            "reason": reason,
+            "score": 0,
+            "size_bytes": 0,
+            "estimated_tokens": 0
+        })
+        loop_idx = loop_idx + 1
+    }
+
+    excluded_manifest := []
+    loop_idx = 0
+    while loop_idx < len(manifest) {
+        manifest_item := manifest[loop_idx]
+        if manifest_item["decision"] == "exclude" || manifest_item["decision"] == "truncate" {
+            excluded_manifest = push(excluded_manifest, manifest_item)
+        }
+        loop_idx = loop_idx + 1
+    }
+
+    markdown := build_markdown(
+        task_text,
+        target_value,
+        budget_value,
+        generated_at,
+        repo_root,
+        git_info,
+        instruction_files,
+        included_files,
+        git_info["changed_files"],
+        commands,
+        constraints,
+        excluded_manifest,
+        redactions,
+        manifest,
+        estimated_tokens
+    )
+
+    instruction_rels := []
+    loop_idx = 0
+    while loop_idx < len(instruction_files) {
+        instruction_rels = push(instruction_rels, path_rel(repo_root, instruction_files[loop_idx]))
+        loop_idx = loop_idx + 1
+    }
+
+    context_json_obj := {
+        "schema_version": "1.0.0",
+        "task": task_text,
+        "target": target_value,
+        "budget": budget_value,
+        "estimated_tokens": estimated_tokens,
+        "generated_at": generated_at,
+        "repo": repo_root,
+        "git": git_info,
+        "instructions": instruction_rels,
+        "selected_files": included_files,
+        "changed_files": git_info["changed_files"],
+        "commands": commands,
+        "constraints": constraints,
+        "redactions": redactions,
+        "excluded": excluded_manifest,
+        "artifacts": artifact_names
+    }
+
+    files_json := []
+    loop_idx = 0
+    while loop_idx < len(candidates) {
+        cand := candidates[loop_idx]
+        files_json = push(files_json, {
+            "path": cand["rel_path"],
+            "size_bytes": cand["size_bytes"],
+            "is_changed": cand["is_changed"],
+            "is_staged": cand["is_staged"],
+            "is_unstaged": cand["is_unstaged"],
+            "is_instruction": cand["is_instruction"],
+            "is_doc": cand["is_doc"],
+            "is_test": cand["is_test"],
+            "is_config": cand["is_config"],
+            "matched_terms": cand["matched_terms"],
+            "selected": cand["selected"],
+            "selection_reason": cand["selection_reason"]
+        })
+        loop_idx = loop_idx + 1
+    }
+
+    exit_code := 0
+    if len(warnings) > 0 {
+        exit_code = 1
+    }
+
+    metadata := {
+        "tool": "scent",
+        "version": VERSION,
+        "generated_at": generated_at,
+        "duration_ms": to_int((now() - started) * 1000),
+        "repo_root": repo_root,
+        "git_branch": git_info["branch"],
+        "git_commit": git_info["commit"],
+        "dirty": git_info["dirty"],
+        "command": "scent pack",
+        "flags": raw_flags,
+        "exit_code": exit_code
+    }
+
+    context_md_path := null
+    context_json_path := null
+
+    if !opts["dry_run"] {
+        if format_value == "md" || format_value == "both" {
+            context_md_path = path_join(out_dir, "context.md")
+            w1 := write_text(context_md_path, markdown)
+            if !w1["ok"] {
+                return w1
+            }
+        }
+        if format_value == "json" || format_value == "both" {
+            context_json_path = path_join(out_dir, "context.json")
+            w2 := write_text(context_json_path, to_json_pretty(context_json_obj))
+            if !w2["ok"] {
+                return w2
+            }
+        }
+
+        w3 := write_text(path_join(out_dir, "manifest.json"), to_json_pretty(manifest))
+        if !w3["ok"] {
+            return w3
+        }
+
+        w4 := write_text(path_join(out_dir, "files.json"), to_json_pretty(files_json))
+        if !w4["ok"] {
+            return w4
+        }
+
+        w5 := write_text(path_join(out_dir, "redactions.json"), to_json_pretty(redactions))
+        if !w5["ok"] {
+            return w5
+        }
+
+        w6 := write_text(path_join(out_dir, "metadata.json"), to_json_pretty(metadata))
+        if !w6["ok"] {
+            return w6
+        }
+    }
+
+    return ok({
+        "output_dir": out_dir,
+        "context_md": context_md_path,
+        "context_json": context_json_path,
+        "estimated_tokens": estimated_tokens,
+        "budget": budget_value,
+        "included_files": len(included_files),
+        "warnings": warnings,
+        "selected_files": included_files,
+        "manifest": manifest,
+        "redactions": redactions,
+        "exit_code": exit_code
+    })
+}
+
+func print_human_result(result, opts) {
+    payload := {
+        "output_dir": result["output_dir"],
+        "context_md": result["context_md"],
+        "context_json": result["context_json"],
+        "estimated_tokens": result["estimated_tokens"],
+        "budget": result["budget"],
+        "included_files": result["included_files"],
+        "warnings": result["warnings"]
+    }
+
+    if opts["json_stdout"] {
+        print(to_json(payload))
+        return null
+    }
+
+    print("scent pack complete")
+    print("output_dir: " + to_string(result["output_dir"]))
+    print("included_files: " + to_string(result["included_files"]))
+    print("estimated_tokens: " + to_string(result["estimated_tokens"]) + " / " + to_string(result["budget"]))
+    if len(result["warnings"]) > 0 {
+        print("warnings:")
+        i := 0
+        while i < len(result["warnings"]) {
+            print("- " + result["warnings"][i])
+            i = i + 1
+        }
+    }
+
+    if opts["verbose"] {
+        print(to_json(payload))
+    }
+    return null
+}
+
+func main() {
+    argv := args()
+
+    if len(argv) > 0 {
+        first := argv[0]
+        if first == "help" || first == "--help" || first == "-h" {
+            print(usage_text())
+            exit(0)
+        }
+        if first == "version" || first == "--version" {
+            print(version_text())
+            exit(0)
+        }
+        if first == "pack" && len(argv) > 1 {
+            second := argv[1]
+            if second == "help" || second == "--help" || second == "-h" {
+                print(usage_text())
+                exit(0)
+            }
+            if second == "version" || second == "--version" {
+                print(version_text())
+                exit(0)
+            }
+        }
+    }
+
+    parsed := parse_cli(argv)
+
+    if !parsed["ok"] {
+        if parsed["exit_code"] == 2 {
+            print(parsed["error"])
+        } else {
+            print("error: " + parsed["error"])
+        }
+        exit(parsed["exit_code"])
+    }
+
+    result := run_pack(parsed["value"], argv)
+    if !result["ok"] {
+        print("error: " + result["error"])
+        exit(result["exit_code"])
+    }
+
+    print_human_result(result["value"], parsed["value"])
+    exit(result["value"]["exit_code"])
+}
+
+# =============================
+# Tests (kujo test-run scent.kujo)
+# =============================
+
+test "help and version surface" {
+    kujo_bin := env_or("KUJO_BIN", "/path/to/kujo/target/release/kujo")
+    scent_script := "/path/to/scent/scent.kujo"
+
+    func shq(value) {
+        text := to_string(value)
+        return "'" + replace(text, "'", "'\"'\"'") + "'"
+    }
+
+    func run_cmd(command) {
+        res := execute_status(command, {"timeout_ms": 120000})
+        if type(res) == "struct" {
+            return res
+        }
+        return {"success": false, "exitcode": 1, "stdout": "", "stderr": "invalid execute_status result"}
+    }
+
+    func run_scent(args) {
+        command := kujo_bin + " run " + shq(scent_script)
+        i := 0
+        while i < len(args) {
+            command = command + " " + shq(args[i])
+            i = i + 1
+        }
+        return run_cmd(command)
+    }
+
+    help_res := run_scent(["help"])
+    assert_equal(help_res.exitcode, 0)
+    assert_equal(contains(help_res.stdout, "Usage:"), 1)
+    assert_equal(contains(help_res.stdout, "Unknown argument"), 0)
+    assert_equal(contains(help_res.stderr, "Unknown argument"), 0)
+
+    top_help_res := run_scent(["--help"])
+    assert_equal(top_help_res.exitcode, 0)
+    assert_equal(contains(top_help_res.stdout, "Usage:"), 1)
+
+    pack_help_res := run_scent(["pack", "--help"])
+    assert_equal(pack_help_res.exitcode, 0)
+    assert_equal(contains(pack_help_res.stdout, "Usage:"), 1)
+    assert_equal(contains(pack_help_res.stdout, "Unknown argument"), 0)
+
+    pack_version_res := run_scent(["pack", "--version"])
+    assert_equal(pack_version_res.exitcode, 0)
+    assert_equal(contains(pack_version_res.stdout, "Scent "), 1)
+
+    version_res := run_scent(["version"])
+    assert_equal(version_res.exitcode, 0)
+    assert_equal(contains(version_res.stdout, "Scent "), 1)
+
+    flag_version_res := run_scent(["--version"])
+    assert_equal(flag_version_res.exitcode, 0)
+    assert_equal(contains(flag_version_res.stdout, "Scent "), 1)
+}
+
+test "pack and dry-run smoke" {
+    kujo_bin := env_or("KUJO_BIN", "/path/to/kujo/target/release/kujo")
+    scent_script := "/path/to/scent/scent.kujo"
+    smoke_root := "/tmp/scent_phase8_fix"
+    smoke_repo := smoke_root + "/repo"
+    smoke_out := smoke_root + "/out"
+    smoke_dry_out := smoke_root + "/dry-run-out"
+
+    func shq(value) {
+        text := to_string(value)
+        return "'" + replace(text, "'", "'\"'\"'") + "'"
+    }
+
+    func run_cmd(command) {
+        res := execute_status(command, {"timeout_ms": 120000})
+        if type(res) == "struct" {
+            return res
+        }
+        return {"success": false, "exitcode": 1, "stdout": "", "stderr": "invalid execute_status result"}
+    }
+
+    func parse_json_safe(text) {
+        try {
+            return {"ok": true, "value": parse_json(text)}
+        } except err {
+            return {"ok": false, "error": to_string(err), "value": {}}
+        }
+    }
+
+    func require_truthy(value, label) {
+        if value == false || value == 0 {
+            print("Assertion failed: " + label)
+            exit(1)
+        }
+    }
+
+    _ = run_cmd("rm -rf " + shq(smoke_root))
+    _ = run_cmd("mkdir -p " + shq(smoke_repo + "/docs") + " " + shq(smoke_repo + "/src") + " " + shq(smoke_repo + "/tests") + " " + shq(smoke_repo + "/logs") + " " + shq(smoke_repo + "/reports") + " " + shq(smoke_repo + "/notes"))
+    _ = run_cmd("cd " + shq(smoke_repo) + " && git init -q")
+    _ = run_cmd("cd " + shq(smoke_repo) + " && git config user.name " + shq("Scent Test"))
+    _ = run_cmd("cd " + shq(smoke_repo) + " && git config user.email " + shq("scent@example.com"))
+    _ = run_cmd("cd " + shq(smoke_repo) + " && printf '%s\\n%s\\n' '# Smoke repo' 'Initial content' > README.md")
+    _ = run_cmd("cd " + shq(smoke_repo) + " && printf '%s\\n%s\\n' 'Initial instructions' 'Follow local cues only.' > AGENTS.md")
+    _ = run_cmd("cd " + shq(smoke_repo) + " && printf '%s\\n%s\\n' '# Architecture' 'Deterministic paths only.' > docs/architecture.md")
+    _ = run_cmd("cd " + shq(smoke_repo) + " && printf '%s\\n%s\\n' 'Potential risk' 'API_KEY=abc123' > docs/security.md")
+    _ = run_cmd("cd " + shq(smoke_repo) + " && printf '%s\\n%s\\n' 'print(\"hello\")' > src/main.kujo")
+    _ = run_cmd("cd " + shq(smoke_repo) + " && printf '%s\\n%s\\n' 'workflow notes' > src/workflow.kujo")
+    _ = run_cmd("cd " + shq(smoke_repo) + " && printf '%s\\n%s\\n' 'assert true' > tests/sample_test.kujo")
+    _ = run_cmd("cd " + shq(smoke_repo) + " && printf '%s\\n%s\\n' 'sample log' > logs/sample.log")
+    _ = run_cmd("cd " + shq(smoke_repo) + " && printf '%s\\n%s\\n' '{\"score\": 7}' > reports/eval.json")
+    _ = run_cmd("cd " + shq(smoke_repo) + " && printf '%s\\n%s\\n' 'context notes' > notes/context.md")
+    _ = run_cmd("cd " + shq(smoke_repo) + " && git add . && git commit -q -m " + shq("seed"))
+    _ = run_cmd("cd " + shq(smoke_repo) + " && printf '%s\\n' 'Unstaged task context.' >> README.md")
+    _ = run_cmd("cd " + shq(smoke_repo) + " && printf '%s\\n' 'Staged security note.' >> docs/security.md")
+    _ = run_cmd("cd " + shq(smoke_repo) + " && git add docs/security.md")
+
+    pack_cmd := "cd " + shq(smoke_repo) + " && " + kujo_bin + " run " + shq(scent_script) + " pack --task " + shq("review workflow cues and risks") + " --out " + shq(smoke_out) + " --changed --staged --unstaged --include docs --include src --include tests --include logs --include reports --include notes --max-files 10 --max-file-bytes 2000 --format both --json"
+    pack_res := run_cmd(pack_cmd)
+    assert_equal(pack_res.exitcode, 0)
+
+    pack_out := parse_json_safe(to_string(pack_res.stdout))
+    require_truthy(pack_out["ok"], "pack output ok")
+    pack_data := pack_out["value"]
+    assert_equal(pack_data["estimated_tokens"], 78)
+    assert_equal(pack_data["included_files"], 8)
+    assert_equal(len(pack_data["warnings"]), 0)
+    require_truthy(file_exists(smoke_out + "/context.json"), "context.json exists")
+    require_truthy(file_exists(smoke_out + "/context.md"), "context.md exists")
+    require_truthy(file_exists(smoke_out + "/files.json"), "files.json exists")
+    require_truthy(file_exists(smoke_out + "/manifest.json"), "manifest.json exists")
+    require_truthy(file_exists(smoke_out + "/metadata.json"), "metadata.json exists")
+    require_truthy(file_exists(smoke_out + "/redactions.json"), "redactions.json exists")
+
+    context := read_file(smoke_out + "/context.json")
+    context_json := parse_json_safe(context)
+    require_truthy(context_json["ok"], "context json parses")
+    context_data := context_json["value"]
+    assert_equal(context_data["git"]["dirty"], true)
+    require_truthy(len(context_data["changed_files"]) > 0, "changed files captured")
+    require_truthy(contains(to_json(context_data["changed_files"]), "README.md"), "README.md captured as changed")
+    require_truthy(contains(to_json(context_data["changed_files"]), "docs/security.md"), "docs/security.md captured as changed")
+    require_truthy(contains(to_json(context_data["git"]["staged_files"]), "docs/security.md"), "staged metadata captured")
+    require_truthy(contains(to_json(context_data["git"]["unstaged_files"]), "README.md"), "unstaged metadata captured")
+    assert_equal(contains(context, "No changed files detected."), 0)
+    require_truthy(contains(context, "[REDACTED:API_KEY]"), "redaction marker present")
+    require_truthy(contains(context, "\"schema_version\""), "schema version present")
+    files_json := parse_json_safe(read_file(smoke_out + "/files.json"))
+    require_truthy(files_json["ok"], "files json parses")
+    files_data := files_json["value"]
+    files_by_path := {}
+    idx := 0
+    while idx < len(files_data) {
+        item := files_data[idx]
+        files_by_path[item["path"]] = item
+        idx = idx + 1
+    }
+    require_truthy(files_by_path["README.md"]["is_changed"], "README.md marked changed")
+    require_truthy(files_by_path["README.md"]["is_unstaged"], "README.md marked unstaged")
+    require_truthy(files_by_path["docs/security.md"]["is_changed"], "docs/security.md marked changed")
+    require_truthy(files_by_path["docs/security.md"]["is_staged"], "docs/security.md marked staged")
+
+    dry_cmd := "cd " + shq(smoke_repo) + " && " + kujo_bin + " run " + shq(scent_script) + " pack --task " + shq("review workflow cues and risks") + " --dry-run --json --out " + shq(smoke_dry_out) + " --changed --staged --unstaged --include docs --include src --include tests --include logs --include reports --include notes --max-files 10 --max-file-bytes 2000 --format both"
+    dry_res := run_cmd(dry_cmd)
+    assert_equal(dry_res.exitcode, 0)
+
+    dry_out := parse_json_safe(to_string(dry_res.stdout))
+    require_truthy(dry_out["ok"], "dry-run output ok")
+    dry_data := dry_out["value"]
+    assert_equal(type(dry_data["context_json"]), "null")
+    assert_equal(type(dry_data["context_md"]), "null")
+    assert_equal(dry_data["estimated_tokens"], 78)
+    assert_equal(dry_data["included_files"], 8)
+    assert_equal(len(dry_data["warnings"]), 0)
+    assert_equal(file_exists(smoke_dry_out + "/context.json"), false)
+    assert_equal(file_exists(smoke_dry_out + "/context.md"), false)
+}
+
+main()

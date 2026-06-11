@@ -1,0 +1,24 @@
+# Kujo runtime / build artifacts
+/target/
+
+# Scent-generated artifacts
+/.scent/
+/out/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Logs and temporary files
+*.log
+*.tmp
