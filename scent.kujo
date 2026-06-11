@@ -1804,8 +1804,9 @@ func main() {
 # =============================
 
 test "help and version surface" {
-    kujo_bin := env_or("KUJO_BIN", "/path/to/kujo/target/release/kujo")
-    scent_script := "/path/to/scent/scent.kujo"
+    cwd := os_getcwd()
+    kujo_bin := env_or("KUJO_BIN", path_join(cwd, "../kujo/target/release/kujo"))
+    scent_script := env_or("SCENT_SCRIPT", path_join(cwd, "scent.kujo"))
 
     func shq(value) {
         text := to_string(value)
@@ -1859,8 +1860,9 @@ test "help and version surface" {
 }
 
 test "pack and dry-run smoke" {
-    kujo_bin := env_or("KUJO_BIN", "/path/to/kujo/target/release/kujo")
-    scent_script := "/path/to/scent/scent.kujo"
+    cwd := os_getcwd()
+    kujo_bin := env_or("KUJO_BIN", path_join(cwd, "../kujo/target/release/kujo"))
+    scent_script := env_or("SCENT_SCRIPT", path_join(cwd, "scent.kujo"))
     smoke_root := "/tmp/scent_phase8_fix"
     smoke_repo := smoke_root + "/repo"
     smoke_out := smoke_root + "/out"
