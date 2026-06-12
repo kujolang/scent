@@ -29,6 +29,17 @@ cd /path/to/scent
 
 4. Include before/after behavior notes in your PR.
 
+## Agent And Example Hygiene
+
+Prioritize copyable examples over tests: examples should model the most token-efficient idioms we want agents to imitate.
+
+- Treat `README.md` as the canonical onboarding/example surface.
+- Treat `docs/scent.md` as the reference contract for command behavior and artifacts.
+- Treat inline tests in `scent.kujo` as behavioral smoke coverage, not tutorial examples.
+- Exclude generated/bulk paths from the main sweep unless the task explicitly targets them; use `rg --files -g '!target/**' -g '!out/**' -g '!.scent/**' -g '!.git/**'` for broad scans.
+- Keep generated pack output out of reviews unless the change is specifically about artifact shape.
+- Prefer small local helpers for repeated output formatting, but keep the demonstrated Scent behavior visible.
+
 ## Code Standards
 
 - Prefer deterministic behavior over heuristic complexity.

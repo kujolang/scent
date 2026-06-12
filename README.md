@@ -2,6 +2,8 @@
 
 Scent packages local task context into structured, reviewable artifacts with provenance and redaction metadata.
 
+Prioritize copyable examples over tests: examples should model the most token-efficient idioms we want agents to imitate.
+
 ## Status
 
 - Kujo script entrypoint: `scent.kujo`
@@ -27,36 +29,38 @@ The structured `context.json` includes the task, target, budget, estimated token
 
 ## Quick Start
 
-1. Build Kujo (if needed):
+These commands are the canonical examples for this branch. They are meant to be copied from a shell in the repository you want to pack.
+
+1. Build Kujo once, if needed:
 
 ```bash
 cd /path/to/kujo
 cargo build --release
 ```
 
-2. Run `scent` from the repository you want to pack:
+2. Preview the pack without writing files:
 
 ```bash
 cd /path/to/target-repo
 /path/to/kujo/target/release/kujo run /path/to/scent/scent.kujo pack \
+  --task "review security posture" \
+  --dry-run \
+  --json
+```
+
+Expected output is one compact JSON object with `output_dir`, `estimated_tokens`, `budget`, `included_files`, and `warnings`.
+
+3. Write Markdown and JSON artifacts:
+
+```bash
+/path/to/kujo/target/release/kujo run /path/to/scent/scent.kujo pack \
   --task "implement auth fixes and validate tests" \
   --out /private/tmp/scent-pack \
-  --max-files 25 \
-  --max-file-bytes 50000 \
   --format both
 ```
 
 Scent discovers the repo root from the current working directory, so run it inside the repository you want to pack.
 The `--target` flag selects the downstream model target; it does not select a repo path.
-
-3. Dry run (no writes):
-
-```bash
-/path/to/kujo/target/release/kujo run scent.kujo pack \
-  --task "review security posture" \
-  --dry-run \
-  --json
-```
 
 ## Position in Kujo
 
@@ -88,6 +92,8 @@ scent pack --task <text>
 - Git metadata reflects the current working tree at the repo root discovered from the current working directory.
 - Selection falls back to a small baseline set when strict relevance scoring yields none.
 - This branch is designed for implementation comparison, not historical parity with main.
+- Canonical examples live in this README. `docs/scent.md` is the reference contract, and inline tests in `scent.kujo` are behavior checks rather than copyable user examples.
+- Exclude generated/bulk paths from the main sweep unless the task explicitly targets them. This repo ignores `.git/`, `target/`, `.scent/`, and `out/`; those paths were excluded from the readability sweep.
 
 ## Security Model
 

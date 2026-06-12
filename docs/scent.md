@@ -4,6 +4,8 @@ This document describes the Kujo-runtime implementation in `scent.kujo`.
 
 Scent packages local task context into structured artifacts that are easy for agents and humans to review before handing work off.
 
+Canonical copyable examples live in `README.md`; this file is the reference contract.
+
 ## Goals
 
 - Deterministic local context-pack generation
@@ -31,12 +33,14 @@ Scent packages local task context into structured artifacts that are easy for ag
 
 ## Artifact Contract
 
-- `context.md`: human-readable task pack
-- `context.json`: machine-readable context
-- `files.json`: discovered file inventory + selection metadata
-- `manifest.json`: decision ledger (include/truncate/exclude)
-- `redactions.json`: per-redaction audit entries
-- `metadata.json`: run-level metadata
+| Artifact | Purpose |
+| --- | --- |
+| `context.md` | Human-readable task pack |
+| `context.json` | Machine-readable context |
+| `files.json` | Discovered file inventory + selection metadata |
+| `manifest.json` | Decision ledger (`include`, `truncate`, `exclude`) |
+| `redactions.json` | Per-redaction audit entries |
+| `metadata.json` | Run-level metadata |
 
 ### `context.json` fields
 
@@ -59,6 +63,7 @@ The structured context payload includes:
 ## Current Runtime Notes
 
 - Candidate traversal avoids ignored directories and recursion cycles.
+- Generated/bulk paths are excluded from normal review sweeps unless explicitly targeted: `.git/`, `target/`, `.scent/`, and `out/`.
 - CLI parsing uses Kujo `arg_parser()` for stability.
 - Git metadata reflects the current working tree at the repo root discovered from the current working directory.
 - Run `scent` from the repository you want to pack; it discovers the repo root from the current working directory.
