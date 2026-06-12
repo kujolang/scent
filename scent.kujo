@@ -10,6 +10,14 @@ func version_text() {
     return "Scent " + VERSION
 }
 
+func is_help_arg(value) {
+    return value == "help" || value == "--help" || value == "-h"
+}
+
+func is_version_arg(value) {
+    return value == "version" || value == "--version"
+}
+
 func defaults() {
     return {
         "task": "",
@@ -90,13 +98,7 @@ func parse_cli(argv) {
     }
     if len(positionals) == 1 {
         cmd := positionals[0]
-        if cmd == "help" {
-            return err(usage_text(), 2)
-        }
-        if cmd == "--help" {
-            return err(usage_text(), 2)
-        }
-        if cmd == "-h" {
+        if is_help_arg(cmd) {
             return err(usage_text(), 2)
         }
         if cmd != "pack" {
@@ -1403,6 +1405,18 @@ func write_text(path, content) {
     return ok(true)
 }
 
+func summary_payload(result) {
+    return {
+        "output_dir": result["output_dir"],
+        "context_md": result["context_md"],
+        "context_json": result["context_json"],
+        "estimated_tokens": result["estimated_tokens"],
+        "budget": result["budget"],
+        "included_files": result["included_files"],
+        "warnings": result["warnings"]
+    }
+}
+
 func run_pack(opts, raw_flags) {
     started := now()
     cwd := os_getcwd()
@@ -1717,16 +1731,22 @@ func run_pack(opts, raw_flags) {
     })
 }
 
-func print_human_result(result, opts) {
-    payload := {
-        "output_dir": result["output_dir"],
-        "context_md": result["context_md"],
-        "context_json": result["context_json"],
-        "estimated_tokens": result["estimated_tokens"],
-        "budget": result["budget"],
-        "included_files": result["included_files"],
-        "warnings": result["warnings"]
+func print_lines(lines) {
+    i := 0
+    while i < len(lines) {
+        print(lines[i])
+        i = i + 1
     }
+    return null
+}
+
+func print_kv(label, value) {
+    print(label + ": " + to_string(value))
+    return null
+}
+
+func print_human_result(result, opts) {
+    payload := summary_payload(result)
 
     if opts["json_stdout"] {
         print(to_json(payload))
@@ -1734,16 +1754,17 @@ func print_human_result(result, opts) {
     }
 
     print("scent pack complete")
-    print("output_dir: " + to_string(result["output_dir"]))
-    print("included_files: " + to_string(result["included_files"]))
-    print("estimated_tokens: " + to_string(result["estimated_tokens"]) + " / " + to_string(result["budget"]))
+    print_kv("output_dir", result["output_dir"])
+    print_kv("included_files", result["included_files"])
+    print_kv("estimated_tokens", to_string(result["estimated_tokens"]) + " / " + to_string(result["budget"]))
     if len(result["warnings"]) > 0 {
-        print("warnings:")
+        warning_lines := ["warnings:"]
         i := 0
         while i < len(result["warnings"]) {
-            print("- " + result["warnings"][i])
+            warning_lines = push(warning_lines, "- " + result["warnings"][i])
             i = i + 1
         }
+        print_lines(warning_lines)
     }
 
     if opts["verbose"] {
@@ -1757,21 +1778,21 @@ func main() {
 
     if len(argv) > 0 {
         first := argv[0]
-        if first == "help" || first == "--help" || first == "-h" {
+        if is_help_arg(first) {
             print(usage_text())
             exit(0)
         }
-        if first == "version" || first == "--version" {
+        if is_version_arg(first) {
             print(version_text())
             exit(0)
         }
         if first == "pack" && len(argv) > 1 {
             second := argv[1]
-            if second == "help" || second == "--help" || second == "-h" {
+            if is_help_arg(second) {
                 print(usage_text())
                 exit(0)
             }
-            if second == "version" || second == "--version" {
+            if is_version_arg(second) {
                 print(version_text())
                 exit(0)
             }
@@ -1867,6 +1888,7 @@ test "pack and dry-run smoke" {
     smoke_repo := smoke_root + "/repo"
     smoke_out := smoke_root + "/out"
     smoke_dry_out := smoke_root + "/dry-run-out"
+    smoke_human_out := smoke_root + "/dry-run-human-out"
 
     func shq(value) {
         text := to_string(value)
@@ -1975,6 +1997,14 @@ test "pack and dry-run smoke" {
     assert_equal(len(dry_data["warnings"]), 0)
     assert_equal(file_exists(smoke_dry_out + "/context.json"), false)
     assert_equal(file_exists(smoke_dry_out + "/context.md"), false)
+
+    human_cmd := "cd " + shq(smoke_repo) + " && " + kujo_bin + " run " + shq(scent_script) + " pack --task " + shq("review workflow cues and risks") + " --dry-run --out " + shq(smoke_human_out) + " --changed --staged --unstaged --include docs --include src --include tests --include logs --include reports --include notes --max-files 10 --max-file-bytes 2000 --format both"
+    human_res := run_cmd(human_cmd)
+    assert_equal(human_res.exitcode, 0)
+    expected_human := "scent pack complete\noutput_dir: " + smoke_human_out + "\nincluded_files: 8\nestimated_tokens: 78 / 12000\n"
+    assert_equal(to_string(human_res.stdout), expected_human)
+    assert_equal(file_exists(smoke_human_out + "/context.json"), false)
+    assert_equal(file_exists(smoke_human_out + "/context.md"), false)
 }
 
 main()
