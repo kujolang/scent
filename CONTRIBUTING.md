@@ -38,7 +38,8 @@ Prioritize copyable examples over tests: examples should model the most token-ef
 - Treat inline tests in `scent.kujo` as behavioral smoke coverage, not tutorial examples.
 - Exclude generated/bulk paths from the main sweep unless the task explicitly targets them; use `rg --files -g '!target/**' -g '!out/**' -g '!.scent/**' -g '!.git/**'` for broad scans.
 - Keep generated pack output out of reviews unless the change is specifically about artifact shape.
-- Prefer small local helpers for repeated output formatting, but keep the demonstrated Scent behavior visible.
+- Prefer small local helpers for repeated output formatting. In `scent.kujo`, reuse `print_lines`, `print_kv`, and argument-array test runners before adding more ad hoc print or command blocks.
+- Keep the demonstrated Scent behavior visible; do not hide CLI examples behind broad abstractions.
 
 ## Code Standards
 

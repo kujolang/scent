@@ -1843,7 +1843,7 @@ test "help and version surface" {
     }
 
     func run_scent(args) {
-        command := kujo_bin + " run " + shq(scent_script)
+        command := shq(kujo_bin) + " run " + shq(scent_script)
         i := 0
         while i < len(args) {
             command = command + " " + shq(args[i])
@@ -1903,6 +1903,16 @@ test "pack and dry-run smoke" {
         return {"success": false, "exitcode": 1, "stdout": "", "stderr": "invalid execute_status result"}
     }
 
+    func run_scent_in_repo(args) {
+        command := "cd " + shq(smoke_repo) + " && " + shq(kujo_bin) + " run " + shq(scent_script)
+        i := 0
+        while i < len(args) {
+            command = command + " " + shq(args[i])
+            i = i + 1
+        }
+        return run_cmd(command)
+    }
+
     func parse_json_safe(text) {
         try {
             return {"ok": true, "value": parse_json(text)}
@@ -1916,6 +1926,44 @@ test "pack and dry-run smoke" {
             print("Assertion failed: " + label)
             exit(1)
         }
+    }
+
+    func require_files_exist(root, files) {
+        i := 0
+        while i < len(files) {
+            file := files[i]
+            require_truthy(file_exists(root + "/" + file), file + " exists")
+            i = i + 1
+        }
+        return null
+    }
+
+    func smoke_pack_args(task, out_dir, json_stdout, dry_run) {
+        values := [
+            "pack",
+            "--task", task,
+            "--out", out_dir,
+            "--changed",
+            "--staged",
+            "--unstaged",
+            "--include", "docs",
+            "--include", "src",
+            "--include", "tests",
+            "--include", "logs",
+            "--include", "reports",
+            "--include", "notes",
+            "--max-files", "10",
+            "--max-file-bytes", "2000",
+            "--format", "both"
+        ]
+
+        if json_stdout {
+            values = push(values, "--json")
+        }
+        if dry_run {
+            values = push(values, "--dry-run")
+        }
+        return values
     }
 
     _ = run_cmd("rm -rf " + shq(smoke_root))
@@ -1938,8 +1986,8 @@ test "pack and dry-run smoke" {
     _ = run_cmd("cd " + shq(smoke_repo) + " && printf '%s\\n' 'Staged security note.' >> docs/security.md")
     _ = run_cmd("cd " + shq(smoke_repo) + " && git add docs/security.md")
 
-    pack_cmd := "cd " + shq(smoke_repo) + " && " + kujo_bin + " run " + shq(scent_script) + " pack --task " + shq("review workflow cues and risks") + " --out " + shq(smoke_out) + " --changed --staged --unstaged --include docs --include src --include tests --include logs --include reports --include notes --max-files 10 --max-file-bytes 2000 --format both --json"
-    pack_res := run_cmd(pack_cmd)
+    task := "review workflow cues and risks"
+    pack_res := run_scent_in_repo(smoke_pack_args(task, smoke_out, true, false))
     assert_equal(pack_res.exitcode, 0)
 
     pack_out := parse_json_safe(to_string(pack_res.stdout))
@@ -1948,12 +1996,7 @@ test "pack and dry-run smoke" {
     assert_equal(pack_data["estimated_tokens"], 78)
     assert_equal(pack_data["included_files"], 8)
     assert_equal(len(pack_data["warnings"]), 0)
-    require_truthy(file_exists(smoke_out + "/context.json"), "context.json exists")
-    require_truthy(file_exists(smoke_out + "/context.md"), "context.md exists")
-    require_truthy(file_exists(smoke_out + "/files.json"), "files.json exists")
-    require_truthy(file_exists(smoke_out + "/manifest.json"), "manifest.json exists")
-    require_truthy(file_exists(smoke_out + "/metadata.json"), "metadata.json exists")
-    require_truthy(file_exists(smoke_out + "/redactions.json"), "redactions.json exists")
+    require_files_exist(smoke_out, ["context.json", "context.md", "files.json", "manifest.json", "metadata.json", "redactions.json"])
 
     context := read_file(smoke_out + "/context.json")
     context_json := parse_json_safe(context)
@@ -1983,8 +2026,7 @@ test "pack and dry-run smoke" {
     require_truthy(files_by_path["docs/security.md"]["is_changed"], "docs/security.md marked changed")
     require_truthy(files_by_path["docs/security.md"]["is_staged"], "docs/security.md marked staged")
 
-    dry_cmd := "cd " + shq(smoke_repo) + " && " + kujo_bin + " run " + shq(scent_script) + " pack --task " + shq("review workflow cues and risks") + " --dry-run --json --out " + shq(smoke_dry_out) + " --changed --staged --unstaged --include docs --include src --include tests --include logs --include reports --include notes --max-files 10 --max-file-bytes 2000 --format both"
-    dry_res := run_cmd(dry_cmd)
+    dry_res := run_scent_in_repo(smoke_pack_args(task, smoke_dry_out, true, true))
     assert_equal(dry_res.exitcode, 0)
 
     dry_out := parse_json_safe(to_string(dry_res.stdout))
@@ -1998,8 +2040,7 @@ test "pack and dry-run smoke" {
     assert_equal(file_exists(smoke_dry_out + "/context.json"), false)
     assert_equal(file_exists(smoke_dry_out + "/context.md"), false)
 
-    human_cmd := "cd " + shq(smoke_repo) + " && " + kujo_bin + " run " + shq(scent_script) + " pack --task " + shq("review workflow cues and risks") + " --dry-run --out " + shq(smoke_human_out) + " --changed --staged --unstaged --include docs --include src --include tests --include logs --include reports --include notes --max-files 10 --max-file-bytes 2000 --format both"
-    human_res := run_cmd(human_cmd)
+    human_res := run_scent_in_repo(smoke_pack_args(task, smoke_human_out, false, true))
     assert_equal(human_res.exitcode, 0)
     expected_human := "scent pack complete\noutput_dir: " + smoke_human_out + "\nincluded_files: 8\nestimated_tokens: 78 / 12000\n"
     assert_equal(to_string(human_res.stdout), expected_human)
