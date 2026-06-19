@@ -18,6 +18,7 @@ This Kujo branch focuses on:
 - safe context packing
 - deterministic file selection
 - pattern-based secret redaction in generated artifacts
+- repository-scoped include/exclude selectors
 
 ## Security Principles
 
@@ -25,6 +26,7 @@ This Kujo branch focuses on:
 - Bounded processing (file/token/size caps)
 - Explicit artifact manifests
 - Redaction-first output handling
+- Repository-bound path handling for explicit selectors
 
 ## Current Hardening Areas
 
@@ -32,10 +34,12 @@ This Kujo branch focuses on:
 - path/exclude handling safety
 - defensive behavior under malformed CLI input
 - review `redactions.json` as the authoritative coverage report for each pack
+- large-repository performance baselines and fixture coverage
 
 ## Operational Guidance
 
 - Treat generated packs as sensitive if source repo contains confidential code.
 - Review `redactions.json` in CI for coverage drift.
 - Treat redaction as best-effort; do not assume it guarantees zero sensitive leakage.
+- Keep `--include` and `--exclude` paths inside the repository being packed. Scent rejects parent-directory traversal and absolute selectors outside the discovered root.
 - Never commit generated packs that include proprietary or secret material.

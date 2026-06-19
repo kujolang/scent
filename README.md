@@ -11,8 +11,11 @@ Prioritize copyable examples over tests: examples should model the most token-ef
 - Help/version are clean: `help`, `--help`, `pack --help`, `version`, and `--version`
 - Output formats: Markdown + JSON
 - Deterministic selection and pattern-based redaction pipeline enabled
+- Repeated `--include` and `--exclude` flags are preserved as ordered selector lists
+- Include/exclude selectors are constrained to the discovered repository root
 - Artifact write path verified on safe local smoke data
 - `pack --dry-run` reports context estimates without writing files
+- Source layout: the canonical Kujo entrypoint is still `scent.kujo` at the repo root; generated `out/`, `.scent/`, and `target/` directories are ignored and should not be committed.
 
 ## What It Produces
 
@@ -61,6 +64,7 @@ Expected output is one compact JSON object with `output_dir`, `estimated_tokens`
 
 Scent discovers the repo root from the current working directory, so run it inside the repository you want to pack.
 The `--target` flag selects the downstream model target; it does not select a repo path.
+Repeat `--include` or `--exclude` to focus multiple paths. These selectors must be relative to the discovered repository root, or absolute paths inside that root.
 
 ## Position in Kujo
 
@@ -91,7 +95,7 @@ scent pack --task <text>
 
 - Git metadata reflects the current working tree at the repo root discovered from the current working directory.
 - Selection falls back to a small baseline set when strict relevance scoring yields none.
-- This branch is designed for implementation comparison, not historical parity with main.
+- This branch is designed for implementation comparison and showcase quality, not historical parity with main.
 - Canonical examples live in this README. `docs/scent.md` is the reference contract, and inline tests in `scent.kujo` are behavior checks rather than copyable user examples.
 - Exclude generated/bulk paths from the main sweep unless the task explicitly targets them. This repo ignores `.git/`, `target/`, `.scent/`, and `out/`; those paths were excluded from the readability sweep.
 
@@ -99,8 +103,9 @@ scent pack --task <text>
 
 - Redacts common secret/token patterns before pack output.
 - Treat redaction as pattern-based and review `redactions.json`; it reduces exposure but does not guarantee perfect secrecy.
+- Covers common key/value secret lines plus JWT-shaped values, OpenAI-style `sk-` tokens, GitHub token prefixes, AWS access-key IDs, Stripe live secret keys, private-key blocks, and authorization headers.
 - Avoids shell interpolation from user-provided task text.
-- Keeps output bounded by explicit byte/token heuristics.
+- Keeps output bounded by explicit byte/token heuristics and repository-scoped include/exclude selectors.
 
 See `SECURITY.md` for reporting and hardening guidance.
 

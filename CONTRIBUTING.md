@@ -39,6 +39,7 @@ Prioritize copyable examples over tests: examples should model the most token-ef
 - Exclude generated/bulk paths from the main sweep unless the task explicitly targets them; use `rg --files -g '!target/**' -g '!out/**' -g '!.scent/**' -g '!.git/**'` for broad scans.
 - Keep generated pack output out of reviews unless the change is specifically about artifact shape.
 - Prefer small local helpers for repeated output formatting. In `scent.kujo`, reuse `print_lines`, `print_kv`, and argument-array test runners before adding more ad hoc print or command blocks.
+- Keep repeated flag behavior, repository-scoped path checks, and redaction coverage protected by inline tests when changing CLI parsing or pack selection.
 - Keep the demonstrated Scent behavior visible; do not hide CLI examples behind broad abstractions.
 
 ## Code Standards
@@ -46,6 +47,7 @@ Prioritize copyable examples over tests: examples should model the most token-ef
 - Prefer deterministic behavior over heuristic complexity.
 - Keep operations bounded (`max_files`, `max_file_bytes`, token budget).
 - Favor explicit redaction and safe defaults, while documenting that redaction is pattern-based rather than perfect.
+- Reject explicit include/exclude selectors that leave the discovered repository root.
 - Document user-visible flag/format changes in `README.md`.
 
 ## Pull Request Checklist

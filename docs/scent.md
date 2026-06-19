@@ -30,6 +30,7 @@ Canonical copyable examples live in `README.md`; this file is the reference cont
 - `version` / `--version`: print `Scent 0.1.0-kujo`
 - `pack`: generate a context pack
 - `pack --dry-run`: estimate the pack without writing artifacts
+- `--include` / `--exclude`: may be repeated; selectors are scoped to the discovered repository root
 
 ## Artifact Contract
 
@@ -63,13 +64,15 @@ The structured context payload includes:
 ## Current Runtime Notes
 
 - Candidate traversal avoids ignored directories and recursion cycles.
+- Candidate traversal sorts directory entries before selection, which keeps pack selection stable across filesystems.
 - Generated/bulk paths are excluded from normal review sweeps unless explicitly targeted: `.git/`, `target/`, `.scent/`, and `out/`.
 - CLI parsing uses Kujo `arg_parser()` for stability.
 - Git metadata reflects the current working tree at the repo root discovered from the current working directory.
 - Run `scent` from the repository you want to pack; it discovers the repo root from the current working directory.
 - The `--target` flag selects the downstream model target, not a repo path.
+- Repeated include/exclude flags are preserved as ordered lists. Selectors cannot contain `..`, and absolute selectors must remain inside the discovered repo root.
 - `pack --dry-run` reports `estimated_tokens` and `included_files` without writing output files.
-- Redaction coverage is reviewable in `redactions.json`; treat it as best-effort, pattern-based protection rather than a secrecy guarantee.
+- Redaction coverage is reviewable in `redactions.json`; treat it as best-effort, pattern-based protection rather than a secrecy guarantee. Current coverage includes key/value secret lines, private-key blocks, authorization headers, JWT-shaped values, OpenAI-style `sk-` tokens, GitHub token prefixes, AWS access-key IDs, and Stripe live secret keys.
 
 ## Context-Layer Positioning
 
@@ -81,5 +84,6 @@ The structured context payload includes:
 ## Hardening Priorities
 
 - Restore rich Git metadata once process primitives are fully stable
-- Expand redaction patterns and add regression fixtures
+- Expand redaction patterns for provider-specific credentials beyond the current common-token coverage
 - Add explicit performance baselines for very large repositories
+- Add packaged fixtures for path-scope, repeated-include, and redaction regressions once the repo grows beyond inline smoke tests
