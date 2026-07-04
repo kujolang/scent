@@ -1,22 +1,129 @@
 # Contributing
 
-Thanks for contributing to `scent`.
+Thanks for helping improve this Kujo ecosystem project.
 
-## Scope Of This Branch
+This guide is intended for standalone Kujo tools and primitives. It does not
+cover the core Kujo language repo, Kujo Skills, or Kujo Workflows when those
+projects have their own contribution rules.
 
-This branch is the Kujo-runtime implementation track for the local context-pack workflow. Keep changes focused on:
+## Development Principles
 
-- `scent.kujo`
-- documentation
-- fixtures/examples that validate Kujo behavior
+- Keep changes focused, reviewable, and tied to one user-visible concern.
+- Prefer deterministic, local-first behavior.
+- Do not add network calls, provider calls, timestamps, or machine-specific
+  output to core command paths unless the feature explicitly requires it.
+- Preserve redaction, path safety, guarded cleanup, and stable output ordering.
+- Add tests for behavior changes. Bug fixes should include regression coverage.
+- Avoid speculative refactors unless they directly simplify the change at hand.
 
-Avoid mixing unrelated refactors.
+For Scent specifically:
 
-## Development Workflow
+- Preserve deterministic selection, bounded traversal, explicit budget
+  decisions, and redaction-first output behavior.
+- Keep changes focused on `scent.kujo`, documentation, and fixtures/examples
+  that validate Kujo behavior unless the task explicitly widens scope.
+- Keep generated pack output out of reviews unless the change specifically
+  concerns artifact shape.
+- Keep demonstrated Scent behavior visible; do not hide CLI examples behind
+  broad abstractions.
 
-1. Create a feature branch from `scent-kujo-build`.
-2. Make focused, reviewable commits.
-3. Run validation locally:
+## Local Setup
+
+Use the Kujo runtime expected by this repository. Most repos support one of
+these environment variables:
+
+```bash
+export KUJO_BIN=/path/to/kujo
+export KUJO=/path/to/kujo
+```
+
+Scent commonly uses the release runtime:
+
+```bash
+/path/to/kujo/target/release/kujo run scent.kujo help
+```
+
+Primary script:
+
+```text
+scent.kujo
+```
+
+Check the repo README, `Makefile`, `tests/`, and `scripts/` directory for the
+authoritative local commands.
+
+## Agent And Example Hygiene
+
+Start with `README.md`, `CONTRIBUTING.md`, relevant docs, and examples before
+broad source sweeps.
+
+Treat user-facing examples as canonical copyable surfaces. Examples should be
+short, runnable, and representative of the idioms humans and agents should copy.
+
+For Scent:
+
+- Treat `README.md` as the canonical onboarding and example surface.
+- Treat `docs/scent.md` as the reference contract for command behavior and
+  artifacts.
+- Treat inline tests in `scent.kujo` as behavioral smoke coverage, not tutorial
+  examples.
+- Treat generated pack artifacts such as `context.md`, `context.json`,
+  `manifest.json`, `files.json`, `redactions.json`, and `metadata.json` as local
+  output unless the task explicitly targets artifact shape.
+
+Exclude generated and bulk paths from broad searches unless the task explicitly
+targets them:
+
+```bash
+rg --files -g '!target/**' -g '!out/**' -g '!.scent/**' -g '!.git/**'
+```
+
+Document any important search exclusions in larger cleanup or audit PRs.
+
+## Code Standards
+
+- Match the surrounding code style before introducing a new abstraction.
+- Keep command output readable and stable.
+- Prefer small local helpers for repeated output, error, section, or key/value
+  formatting once repetition distracts from the behavior.
+- Keep CLI contracts explicit: flags, exit codes, JSON fields, artifact paths,
+  and documented examples should agree with parser behavior.
+- Keep config honest. A config key should either change observable behavior or
+  be clearly documented as reserved.
+- Preserve compatibility entrypoints and wrappers when a repo provides them.
+- In `scent.kujo`, reuse `print_lines`, `print_kv`, and argument-array test
+  runners before adding more ad hoc print or command blocks.
+- Keep repeated flag behavior, repository-scoped path checks, and redaction
+  coverage protected by inline tests when changing CLI parsing or pack
+  selection.
+- Reject explicit include/exclude selectors that leave the discovered repository
+  root.
+- Favor explicit redaction and safe defaults, while documenting that redaction
+  is pattern-based rather than perfect.
+
+## Kujo Runtime Notes
+
+Kujo ecosystem tools often follow these defensive patterns:
+
+- Prefer `while` loops in complex functions.
+- Avoid duplicate local names across branches in the same function.
+- Keep imports at the top of the file.
+- Export functions that are imported by another module.
+- Guard dictionary access with `has_key()` or local helper wrappers.
+- Remember that some builtins return int-like `1`/`0` instead of booleans.
+- Guard parsing operations such as JSON or TOML parsing and validate the result.
+- Keep deep tree walks iterative where recursion risks VM stack limits.
+- Be careful with byte-based string indexes versus character-based substring
+  operations; use existing repo helpers when available.
+
+Follow stricter runtime notes in the local repo when they exist.
+
+## Validation
+
+Before opening a pull request, run the strongest local validation available for
+the repo.
+
+Focused Scent validation:
 
 ```bash
 cd /path/to/scent
@@ -27,42 +134,40 @@ cd /path/to/scent
 /path/to/kujo/target/release/kujo run scent.kujo pack --task "smoke" --dry-run --json
 ```
 
-4. Include before/after behavior notes in your PR.
+Tests should stay offline and deterministic unless the repo explicitly marks a
+live-provider or network test as opt-in.
 
-## Agent And Example Hygiene
+## Documentation And Changelog
 
-Prioritize copyable examples over tests: examples should model the most token-efficient idioms we want agents to imitate.
+Update docs when behavior, configuration, command output, flags, schemas,
+examples, or security expectations change.
 
-- Treat `README.md` as the canonical onboarding/example surface.
-- Treat `docs/scent.md` as the reference contract for command behavior and artifacts.
-- Treat inline tests in `scent.kujo` as behavioral smoke coverage, not tutorial examples.
-- Exclude generated/bulk paths from the main sweep unless the task explicitly targets them; use `rg --files -g '!target/**' -g '!out/**' -g '!.scent/**' -g '!.git/**'` for broad scans.
-- Keep generated pack output out of reviews unless the change is specifically about artifact shape.
-- Prefer small local helpers for repeated output formatting. In `scent.kujo`, reuse `print_lines`, `print_kv`, and argument-array test runners before adding more ad hoc print or command blocks.
-- Keep repeated flag behavior, repository-scoped path checks, and redaction coverage protected by inline tests when changing CLI parsing or pack selection.
-- Keep the demonstrated Scent behavior visible; do not hide CLI examples behind broad abstractions.
+For Scent, update `README.md` and `docs/scent.md` for user-visible flag, format,
+artifact, JSON field, or exit behavior changes. Also check:
 
-## Code Standards
+- `SECURITY.md`
+- command reference or flags docs
+- examples
+- `CHANGELOG.md`
 
-- Prefer deterministic behavior over heuristic complexity.
-- Keep operations bounded (`max_files`, `max_file_bytes`, token budget).
-- Favor explicit redaction and safe defaults, while documenting that redaction is pattern-based rather than perfect.
-- Reject explicit include/exclude selectors that leave the discovered repository root.
-- Document user-visible flag/format changes in `README.md`.
+User-visible behavior changes should include a changelog entry when the repo has
+a changelog.
 
-## Pull Request Checklist
+## Pull Requests
 
-- [ ] Kujo check passes
-- [ ] Smoke run succeeds
-- [ ] No secrets in repository or generated fixtures
-- [ ] Docs updated for CLI or behavior changes
+A good PR includes:
 
-## Commit Message Guidance
+- Problem statement.
+- Change summary.
+- User-visible impact.
+- Before/after behavior notes when behavior changes.
+- Test evidence with commands and outcomes.
+- Documentation or changelog updates.
+- Known risks or follow-up work, if any.
+
+Keep generated artifacts out of commits unless the artifact is the reviewed
+output of the change.
+
+## Commit Messages
 
 Use concise, imperative commit subjects.
-
-Examples:
-
-- `stabilize candidate collection in Kujo runtime`
-- `add fallback selection when strict scoring yields none`
-- `update readme for Kujo branch execution flow`
