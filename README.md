@@ -1,5 +1,9 @@
 # Scent
 
+[![Version](https://img.shields.io/badge/version-1.0.0-black)](https://github.com/kujolang/scent)
+[![License](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
+[![built with Kujo](https://img.shields.io/badge/built%20with-Kujo-white.svg)](https://github.com/kujolang/kujo)
+
 Scent packages local task context into structured, reviewable artifacts with provenance and redaction metadata.
 
 Prioritize copyable examples over tests: examples should model the most token-efficient idioms we want agents to imitate.
