@@ -1,0 +1,68 @@
+# Spec - Scent launch readiness review
+
+name: "Scent launch readiness review"
+goal: "Keep Scent locally release-ready as a Kujo-native context-pack generator with deterministic selection, bounded output, provenance, and pattern-based redaction evidence."
+version: "0.1.0"
+background: "Scent is part of the Kujo prelaunch ecosystem review. The verified scope is local context-pack generation from repository files; redaction is best-effort and generated packs remain sensitive review artifacts."
+scope: "Repository-local CLI behavior, dry-run and artifact contracts, path-scoped include/exclude handling, redaction metadata, readiness wording, and launch evidence capture."
+non_goals:
+  - "Publishing packages or public releases"
+  - "Claiming perfect secret-removal or enterprise data-loss-prevention guarantees"
+  - "Claiming production or enterprise readiness without target-environment validation"
+relevant_systems:
+  - "Kujo runtime"
+  - "Scent CLI"
+  - "local git repositories"
+  - "prelaunch launch evidence packet"
+likely_files:
+  - "README.md"
+  - "docs/scent.md"
+  - "SECURITY.md"
+  - "scent.kujo"
+  - "tests/README.md"
+acceptance_criteria:
+  - "README version badge matches VERSION and CLI output."
+  - "Help/version commands are clean and copyable."
+  - "Kujo check and inline test suite pass locally."
+  - "Dry-run JSON smoke reports bounded context estimates without writing artifacts."
+  - "ShipCheck and Concord pass locally."
+  - "Redaction remains documented as pattern-based/best-effort, not a secrecy guarantee."
+eval_requirements:
+  - description: "Run Scent help and version smokes."
+    check_type: "command"
+    params:
+      command: "kujo run scent.kujo help >/dev/null && kujo run scent.kujo version >/dev/null && kujo run scent.kujo --version >/dev/null"
+  - description: "Run Kujo static check."
+    check_type: "command"
+    params:
+      command: "kujo check scent.kujo"
+  - description: "Run dry-run JSON context-pack smoke."
+    check_type: "command"
+    params:
+      command: "kujo run scent.kujo pack --task \"smoke\" --dry-run --json"
+  - description: "Run inline Kujo tests."
+    check_type: "command"
+    params:
+      command: "KUJO_BIN=kujo kujo test"
+risks:
+  - risk: "Pattern-based redaction may miss unknown secret formats or high-entropy tokens."
+    mitigation: "Keep generated packs sensitive, require redactions.json review, and do not claim perfect DLP coverage."
+    severity: "high"
+  - risk: "Large repositories may need target-specific performance and sensitivity review."
+    mitigation: "Use explicit budgets and include/exclude selectors, then validate on target repositories before broad launch claims."
+    severity: "medium"
+dependencies:
+  - "kujo on PATH"
+  - "Local git checkout for repository metadata"
+review_expectations:
+  - "Review redactions.json on generated packs before sharing."
+  - "Review target-environment repository size and confidentiality boundaries before production/enterprise claims."
+human_approval_points:
+  - "Before publishing packages or public releases"
+  - "Before using generated packs from proprietary or secret-bearing repositories outside local review"
+  - "Before production or enterprise readiness claims"
+priority: "high"
+tags:
+  - "kujo"
+  - "scent"
+  - "launch-readiness"
