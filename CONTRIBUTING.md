@@ -29,12 +29,10 @@ For Scent specifically:
 
 ## Local Setup
 
-Use the Kujo runtime expected by this repository. Most repos support one of
-these environment variables:
+Install Kujo so the `kujo` command is available on your `PATH`:
 
 ```bash
-export KUJO_BIN=kujo
-export KUJO=kujo
+kujo --version
 ```
 
 Scent commonly uses the installed runtime:
