@@ -33,14 +33,14 @@ Use the Kujo runtime expected by this repository. Most repos support one of
 these environment variables:
 
 ```bash
-export KUJO_BIN=/path/to/kujo
-export KUJO=/path/to/kujo
+export KUJO_BIN=kujo
+export KUJO=kujo
 ```
 
-Scent commonly uses the release runtime:
+Scent commonly uses the installed runtime:
 
 ```bash
-/path/to/kujo/target/release/kujo run scent.kujo help
+kujo run scent.kujo help
 ```
 
 Primary script:
@@ -127,11 +127,11 @@ Focused Scent validation:
 
 ```bash
 cd /path/to/scent
-/path/to/kujo/target/release/kujo run scent.kujo help
-/path/to/kujo/target/release/kujo run scent.kujo version
-/path/to/kujo/target/release/kujo run scent.kujo --version
-/path/to/kujo/target/release/kujo check scent.kujo
-/path/to/kujo/target/release/kujo run scent.kujo pack --task "smoke" --dry-run --json
+kujo run scent.kujo help
+kujo run scent.kujo version
+kujo run scent.kujo --version
+kujo check scent.kujo
+kujo run scent.kujo pack --task "smoke" --dry-run --json
 ```
 
 Tests should stay offline and deterministic unless the repo explicitly marks a

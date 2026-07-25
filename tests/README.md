@@ -6,6 +6,6 @@ run by the Kujo test runner without a separate fixture harness.
 Release smoke commands:
 
 ```bash
-/path/to/kujo check scent.kujo
-/path/to/kujo run scent.kujo pack --task "smoke" --dry-run --json
+kujo check scent.kujo
+kujo run scent.kujo pack --task "smoke" --dry-run --json
 ```

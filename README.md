@@ -38,18 +38,17 @@ The structured `context.json` includes the task, target, budget, estimated token
 
 These commands are the canonical examples for this branch. They are meant to be copied from a shell in the repository you want to pack.
 
-1. Build Kujo once, if needed:
+1. Verify Kujo is installed:
 
 ```bash
-cd /path/to/kujo
-cargo build --release
+kujo --version
 ```
 
 2. Preview the pack without writing files:
 
 ```bash
 cd /path/to/target-repo
-/path/to/kujo/target/release/kujo run /path/to/scent/scent.kujo pack \
+kujo run /path/to/scent/scent.kujo pack \
   --task "review security posture" \
   --dry-run \
   --json
@@ -60,7 +59,7 @@ Expected output is one compact JSON object with `output_dir`, `estimated_tokens`
 3. Write Markdown and JSON artifacts:
 
 ```bash
-/path/to/kujo/target/release/kujo run /path/to/scent/scent.kujo pack \
+kujo run /path/to/scent/scent.kujo pack \
   --task "implement auth fixes and validate tests" \
   --out /private/tmp/scent-pack \
   --format both
