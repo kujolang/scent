@@ -27,7 +27,7 @@ Canonical copyable examples live in `README.md`; this file is the reference cont
 
 - `help` / `--help`: print usage
 - `pack --help`: print pack-specific usage
-- `version` / `--version`: print `Scent 0.1.0-kujo`
+- `version` / `--version`: print `Scent 1.0.0`
 - `pack`: generate a context pack
 - `pack --dry-run`: estimate the pack without writing artifacts
 - `--include` / `--exclude`: may be repeated; selectors are scoped to the discovered repository root
