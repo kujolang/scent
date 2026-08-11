@@ -118,6 +118,9 @@ func parse_cli(argv) {
     if len(positionals) > 1 {
         return err("expected a single subcommand: pack", 2)
     }
+    if len(positionals) == 0 {
+        return err("expected subcommand: pack\n\n" + usage_text(), 2)
+    }
     if len(positionals) == 1 {
         cmd := positionals[0]
         if is_help_arg(cmd) {
@@ -209,6 +212,9 @@ func resolve_path(base, path) {
     if is_absolute(path) {
         return path
     }
+    if path == "." {
+        return base
+    }
     return path_join(base, path)
 }
 
@@ -235,7 +241,50 @@ func has_parent_path_segment(path) {
     return false
 }
 
+func strip_trailing_slashes(path) {
+    out := to_string(path)
+    while len(out) > 1 && ends_with(out, "/") {
+        out = substring(out, 0, len(out) - 1)
+    }
+    return out
+}
+
+func normalize_selector(repo_root, path) {
+    raw := strip_trailing_slashes(trim(to_string(path)))
+    if is_absolute(raw) {
+        return path_rel(repo_root, raw)
+    }
+    while starts_with(raw, "./") {
+        raw = substring(raw, 2, len(raw))
+    }
+    raw = strip_trailing_slashes(raw)
+    if raw == "" || raw == "." {
+        return "."
+    }
+    return raw
+}
+
+func path_has_symlink_segment(path) {
+    full := to_string(path)
+    parts := split(full, "/")
+    current := "/"
+    i := 0
+    while i < len(parts) {
+        part := parts[i]
+        i = i + 1
+        if part == "" {
+            continue
+        }
+        current = path_join(current, part)
+        if path_exists(current) && path_is_symlink(current) {
+            return true
+        }
+    }
+    return false
+}
+
 func validate_scoped_paths(repo_root, paths, flag_name) {
+    normalized := []
     i := 0
     while i < len(paths) {
         raw := trim(to_string(paths[i]))
@@ -251,9 +300,13 @@ func validate_scoped_paths(repo_root, paths, flag_name) {
         if full != repo_root && !starts_with(full, root_prefix) {
             return err(flag_name + " path must stay inside the repository: " + raw, 2)
         }
+        if path_has_symlink_segment(full) {
+            return err(flag_name + " path cannot contain a symlink: " + raw, 2)
+        }
+        normalized = push(normalized, normalize_selector(repo_root, raw))
         i = i + 1
     }
-    return ok(true)
+    return ok(normalized)
 }
 
 func detect_repo_root(start) {
@@ -342,6 +395,25 @@ func run_process(args) {
             "stderr_truncated": false
         }
     }
+}
+
+func canonical_path_for_scope(path) {
+    raw := strip_trailing_slashes(to_string(path))
+    if path_exists(raw) {
+        resolved := run_process(["realpath", raw])
+        if resolved.success {
+            return strip_trailing_slashes(trim(to_string(resolved.stdout)))
+        }
+    }
+
+    parent := dirname(raw)
+    if path_exists(parent) {
+        resolved_parent := run_process(["realpath", parent])
+        if resolved_parent.success {
+            return path_join(strip_trailing_slashes(trim(to_string(resolved_parent.stdout))), basename(raw))
+        }
+    }
+    return raw
 }
 
 func split_lines(text) {
@@ -520,6 +592,11 @@ func should_skip_file(path) {
     return is_binary_extension(path)
 }
 
+func contains_nul(text) {
+    nul := parse_json("\"\\u0000\"")
+    return contains(to_string(text), nul)
+}
+
 func is_instruction_rel(rel) {
     return rel == "AGENTS.md" || rel == "AGENTS.override.md" || rel == "CLAUDE.md" || rel == "README.md" || rel == "CONTRIBUTING.md" || rel == "docs/README.md"
 }
@@ -572,6 +649,9 @@ func path_is_excluded(full, exclude_abs) {
 func read_text_file(path) {
     try {
         content := read_file(path)
+        if contains_nul(content) {
+            return {"ok": false, "error": "binary file"}
+        }
         return {"ok": true, "content": content}
     } except e {
         return {"ok": false, "error": to_string(e)}
@@ -621,6 +701,9 @@ func walk_collect(repo_root, current, max_candidates, visited_dirs, depth) {
         }
 
         full := path_join(current, name)
+        if path_is_symlink(full) {
+            continue
+        }
         if path_is_dir(full) {
             remaining := max_candidates - len(files)
             child_files := walk_collect(repo_root, full, remaining, visited_dirs, depth + 1)
@@ -652,7 +735,8 @@ func collect_candidates(repo_root, git_info, instruction_files, includes, exclud
             if path_is_file(inc_abs) {
                 all_paths = push(all_paths, inc_abs)
             } else if path_is_dir(inc_abs) {
-                include_paths := walk_collect(repo_root, inc_abs, 2000, visited_dirs, 0)
+                include_visited := {}
+                include_paths := walk_collect(repo_root, inc_abs, 2000, include_visited, 0)
                 add_idx := 0
                 while add_idx < len(include_paths) {
                     all_paths = push(all_paths, include_paths[add_idx])
@@ -767,7 +851,7 @@ func explicit_include_match(rel, includes, repo_root) {
             inc_rel = path_rel(repo_root, inc_rel)
         }
 
-        if rel == inc_rel || starts_with(rel, inc_rel + "/") {
+        if inc_rel == "." || rel == inc_rel || starts_with(rel, inc_rel + "/") {
             return true
         }
         i = i + 1
@@ -1003,6 +1087,67 @@ func clip_text(content, limit_bytes) {
     return {"content": substring(content, 0, limit_bytes), "truncated": true}
 }
 
+func normalize_credential_key(raw_key) {
+    key := trim(lower(to_string(raw_key)))
+    prefixes := ["export ", "let ", "const ", "var "]
+    prefix_idx := 0
+    while prefix_idx < len(prefixes) {
+        prefix := prefixes[prefix_idx]
+        if starts_with(key, prefix) {
+            key = trim(substring(key, len(prefix), len(key)))
+        }
+        prefix_idx = prefix_idx + 1
+    }
+
+    if len(key) > 1 && ((starts_with(key, "\"") && ends_with(key, "\"")) || (starts_with(key, "'") && ends_with(key, "'"))) {
+        key = substring(key, 1, len(key) - 1)
+    }
+    if key == "" || contains(key, " ") || contains(key, "\t") {
+        return ""
+    }
+
+    if !regex_match(key, "^[a-z0-9_.-]+$") {
+        return ""
+    }
+    return key
+}
+
+func contains_credential_key_term(text) {
+    terms := ["api_key", "apikey", "access_token", "refresh_token", "session_token", "password", "passwd", "secret", "token", "cookie", "webhook"]
+    i := 0
+    lower_text := lower(to_string(text))
+    while i < len(terms) {
+        if contains(lower_text, terms[i]) {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+func credential_key_matches(key, term) {
+    return regex_match(key, "(^|[._-])" + term + "($|[._-])")
+}
+
+func credential_assignment(line) {
+    separators := ["=", ":"]
+    separator_idx := 0
+    while separator_idx < len(separators) {
+        separator := separators[separator_idx]
+        if contains(line, separator) {
+            parts := split(line, separator)
+            if contains_credential_key_term(parts[0]) {
+                key := normalize_credential_key(parts[0])
+                if key != "" {
+                    return {"ok": true, "key": key, "prefix": parts[0] + separator, "separator": separator}
+                }
+            }
+        }
+        separator_idx = separator_idx + 1
+    }
+    return {"ok": false, "key": "", "prefix": "", "separator": ""}
+}
+
 func redact_text(file, content) {
     redactions := []
     text := to_string(content)
@@ -1042,6 +1187,7 @@ func redact_text(file, content) {
         secret_line := false
         placeholder := ""
         redaction_type := ""
+        assignment := credential_assignment(line)
 
         patterns := [
             ["api_key", "[REDACTED:API_KEY]", "api_key"],
@@ -1060,7 +1206,7 @@ func redact_text(file, content) {
         p_idx := 0
         while p_idx < len(patterns) {
             p := patterns[p_idx]
-            if contains(lower_line, p[0]) && (contains(line, "=") || contains(line, ":")) && contains(lower_line, "redacted") == 0 {
+            if assignment["ok"] && credential_key_matches(assignment["key"], p[0]) {
                 secret_line = true
                 placeholder = p[1]
                 redaction_type = p[2]
@@ -1070,17 +1216,11 @@ func redact_text(file, content) {
         }
 
         if secret_line {
-            if contains(line, "=") {
-                eq_parts := split(line, "=")
-                key := eq_parts[0] + "="
-                out = push(out, key + placeholder)
-            } else if contains(line, ":") {
-                colon_parts := split(line, ":")
-                key := colon_parts[0] + ":"
-                out = push(out, key + " " + placeholder)
-            } else {
-                out = push(out, placeholder)
+            separator_space := ""
+            if assignment["separator"] == ":" {
+                separator_space = " "
             }
+            out = push(out, assignment["prefix"] + separator_space + placeholder)
             redactions = push(redactions, {"file": file, "line": line_no, "redaction_type": redaction_type, "placeholder": placeholder})
             idx = idx + 1
             continue
@@ -1320,6 +1460,14 @@ func target_notes(target) {
     return "Usage notes:\n- Use this pack as bounded task context.\n- Follow project instructions and constraints.\n- Validate with detected commands before handoff."
 }
 
+func markdown_fence(content) {
+    fence := "```"
+    while contains(content, fence) {
+        fence = fence + "`"
+    }
+    return fence
+}
+
 func markdown_section_list(title, items, empty_line) {
     out := "## " + title + "\n\n"
     if len(items) == 0 {
@@ -1414,12 +1562,13 @@ func build_markdown(task, target, budget, generated_at, repo_root, git_info, ins
     while idx < len(selected_files) {
         f := selected_files[idx]
         out = out + "### " + f["path"] + "\n\n"
-        out = out + "```text\n"
+        fence := markdown_fence(f["content"])
+        out = out + fence + "text\n"
         out = out + f["content"]
         if !ends_with(f["content"], "\n") {
             out = out + "\n"
         }
-        out = out + "```\n\n"
+        out = out + fence + "\n\n"
         idx = idx + 1
     }
 
@@ -1490,7 +1639,7 @@ func write_text(path, content) {
         return err("failed to create parent directory for " + path, 4)
     }
 
-    wr := write_file(path, content)
+    wr := write_file(path, content, true)
     if !wr {
         return err("failed to write " + path, 4)
     }
@@ -1525,9 +1674,25 @@ func run_pack(opts, raw_flags) {
     if !include_scope["ok"] {
         return include_scope
     }
+    opts["include"] = include_scope["value"]
     exclude_scope := validate_scoped_paths(repo_root, opts["exclude"], "--exclude")
     if !exclude_scope["ok"] {
         return exclude_scope
+    }
+    opts["exclude"] = exclude_scope["value"]
+
+    stamp := "unix-" + to_string(to_int(now() * 1000))
+    out_dir := opts["out"]
+    if out_dir == null {
+        out_dir = path_join(path_join(path_join(repo_root, ".scent"), "packs"), stamp)
+    } else {
+        out_dir = resolve_path(cwd, out_dir)
+    }
+
+    candidate_excludes := opts["exclude"]
+    normalized_out_dir := canonical_path_for_scope(out_dir)
+    if normalized_out_dir != repo_root && starts_with(normalized_out_dir, repo_root + "/") {
+        candidate_excludes = push(candidate_excludes, normalized_out_dir)
     }
 
     task_terms := tokenize_task(task_text)
@@ -1542,11 +1707,11 @@ func run_pack(opts, raw_flags) {
         warnings = push(warnings, "git unavailable; running in degraded mode")
     }
 
-    candidates := collect_candidates(repo_root, git_info, instruction_files, opts["include"], opts["exclude"], task_terms)
+    candidates := collect_candidates(repo_root, git_info, instruction_files, opts["include"], candidate_excludes, task_terms)
     selected_candidates := select_candidates(opts, repo_root, candidates)
 
     selected_files := []
-    redactions := []
+    redactions_by_path := {}
 
     loop_idx := 0
     while loop_idx < len(selected_candidates) {
@@ -1560,11 +1725,7 @@ func run_pack(opts, raw_flags) {
         clipped := clip_text(read_res["content"], max_file_bytes_value)
         redacted := redact_text(selected_candidate["rel_path"], clipped["content"])
 
-        red_idx := 0
-        while red_idx < len(redacted["redactions"]) {
-            redactions = push(redactions, redacted["redactions"][red_idx])
-            red_idx = red_idx + 1
-        }
+        redactions_by_path[selected_candidate["rel_path"]] = redacted["redactions"]
 
         content := redacted["content"]
         selected_files = push(selected_files, {
@@ -1585,6 +1746,26 @@ func run_pack(opts, raw_flags) {
     included_files := budget_result["files"]
     manifest := budget_result["manifest"]
 
+    redactions := []
+    loop_idx = 0
+    while loop_idx < len(included_files) {
+        final_file := included_files[loop_idx]
+        final_lines := split(final_file["content"], "\n")
+        if has_key(redactions_by_path, final_file["path"]) {
+            file_redactions := redactions_by_path[final_file["path"]]
+            red_idx := 0
+            while red_idx < len(file_redactions) {
+                redaction_item := file_redactions[red_idx]
+                line_index := to_int(redaction_item["line"]) - 1
+                if line_index >= 0 && line_index < len(final_lines) && contains(final_lines[line_index], redaction_item["placeholder"]) {
+                    redactions = push(redactions, redaction_item)
+                }
+                red_idx = red_idx + 1
+            }
+        }
+        loop_idx = loop_idx + 1
+    }
+
     if len(included_files) == 0 {
         warnings = push(warnings, "no relevant files selected; output contains metadata only")
     }
@@ -1594,6 +1775,16 @@ func run_pack(opts, raw_flags) {
     while loop_idx < len(included_files) {
         included_file := included_files[loop_idx]
         selected_map[included_file["path"]] = 1
+        loop_idx = loop_idx + 1
+    }
+
+    manifested_file_map := {}
+    loop_idx = 0
+    while loop_idx < len(manifest) {
+        existing_manifest := manifest[loop_idx]
+        if existing_manifest["type"] == "file" {
+            manifested_file_map[existing_manifest["path"]] = 1
+        }
         loop_idx = loop_idx + 1
     }
 
@@ -1610,15 +1801,17 @@ func run_pack(opts, raw_flags) {
             if candidate_item["selection_reason"] == "" {
                 candidate_item["selection_reason"] = "not selected by deterministic relevance"
             }
-            manifest = push(manifest, {
-                "path": candidate_item["rel_path"],
-                "type": "file",
-                "decision": "exclude",
-                "reason": candidate_item["selection_reason"],
-                "score": 0,
-                "size_bytes": candidate_item["size_bytes"],
-                "estimated_tokens": 0
-            })
+            if has_key(manifested_file_map, candidate_item["rel_path"]) == 0 {
+                manifest = push(manifest, {
+                    "path": candidate_item["rel_path"],
+                    "type": "file",
+                    "decision": "exclude",
+                    "reason": candidate_item["selection_reason"],
+                    "score": 0,
+                    "size_bytes": candidate_item["size_bytes"],
+                    "estimated_tokens": 0
+                })
+            }
         }
         loop_idx = loop_idx + 1
     }
@@ -1640,14 +1833,6 @@ func run_pack(opts, raw_flags) {
     }
 
     generated_at := "unix-" + to_string(to_int(now()))
-    stamp := "unix-" + to_string(to_int(now() * 1000))
-
-    out_dir := opts["out"]
-    if out_dir == null {
-        out_dir = path_join(path_join(path_join(repo_root, ".scent"), "packs"), stamp)
-    } else {
-        out_dir = resolve_path(cwd, out_dir)
-    }
 
     artifact_names := []
     if format_value == "md" || format_value == "both" {
@@ -2244,6 +2429,121 @@ test "redaction and scoped include hardening" {
     ])
     assert_equal(absolute_res.exitcode, 2)
     require_truthy(contains(absolute_res.stdout, "--include path must stay inside the repository"), "absolute outside path rejected")
+}
+
+test "ten bug regressions" {
+    cwd := os_getcwd()
+    kujo_bin := env_or("KUJO_BIN", path_join(cwd, "../kujo/target/release/kujo"))
+    scent_script := env_or("SCENT_SCRIPT", path_join(cwd, "scent.kujo"))
+    bug_root := "/tmp/scent_bug_regressions"
+    bug_repo := bug_root + "/repo"
+    bug_out := bug_repo + "/pack"
+    budget_out := bug_root + "/budget-out"
+    late_out := bug_root + "/late-out"
+
+    func shq(value) {
+        text := to_string(value)
+        return "'" + replace(text, "'", "'\"'\"'") + "'"
+    }
+
+    func run_cmd(command) {
+        res := execute_status(command, {"timeout_ms": 120000})
+        if type(res) == "struct" {
+            return res
+        }
+        return {"success": false, "exitcode": 1, "stdout": "", "stderr": "invalid execute_status result"}
+    }
+
+    func run_scent_in_repo(args) {
+        command := "cd " + shq(bug_repo) + " && " + shq(kujo_bin) + " run " + shq(scent_script)
+        i := 0
+        while i < len(args) {
+            command = command + " " + shq(args[i])
+            i = i + 1
+        }
+        return run_cmd(command)
+    }
+
+    func require_truthy(value, label) {
+        if value == false || value == 0 {
+            print("Assertion failed: " + label)
+            exit(1)
+        }
+    }
+
+    _ = run_cmd("rm -rf " + shq(bug_root))
+    _ = run_cmd("mkdir -p " + shq(bug_repo + "/docs") + " " + shq(bug_repo + "/src") + " " + shq(bug_repo + "/focus") + " " + shq(bug_out))
+    _ = run_cmd("cd " + shq(bug_repo) + " && git init -q")
+    _ = run_cmd("cd " + shq(bug_repo) + " && printf '%s\\n' '# Regression repo' > README.md")
+    _ = run_cmd("cd " + shq(bug_repo) + " && printf '%s\\n' 'EXCLUDED_DOC_MARKER' > docs/excluded.md")
+    _ = run_cmd("cd " + shq(bug_repo) + " && printf '%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n' 'password=supersecret # not redacted' 'print(\"token\", value == 3)' '\"estimated_tokens\": 5' '\"password\": \"abc=def\"' '```' '# injected heading' '```' > src/sample.txt")
+    _ = run_cmd("cd " + shq(bug_repo) + " && printf 'safe\\000BINARY_SECRET_MARKER' > src/blob")
+    _ = run_cmd("printf '%s\\n' 'SYMLINK_SECRET_MARKER' > " + shq(bug_root + "/outside.txt"))
+    _ = run_cmd("ln -s " + shq(bug_root + "/outside.txt") + " " + shq(bug_repo + "/src/outside-link"))
+    _ = run_cmd("printf '%s\\n' 'STALE_OUTPUT_MARKER' > " + shq(bug_out + "/context.md"))
+
+    pack_res := run_scent_in_repo([
+        "pack", "--task", "review regression markers", "--out", bug_out,
+        "--include", ".", "--exclude", "docs/", "--max-files", "20",
+        "--format", "both", "--json"
+    ])
+    assert_equal(pack_res.exitcode, 0)
+    context := read_file(bug_out + "/context.json")
+    context_md := read_file(bug_out + "/context.md")
+
+    # 1: credential lines cannot bypass redaction by containing the word "redacted".
+    assert_equal(contains(context, "supersecret"), 0)
+    # 2: ordinary code mentioning a token is not corrupted.
+    require_truthy(contains(context, "print(\\\"token\\\", value == 3)"), "benign token code preserved")
+    require_truthy(contains(context, "\\\"estimated_tokens\\\": 5"), "non-secret token metadata preserved")
+    # 3: separators in credential values do not corrupt the preserved key prefix.
+    require_truthy(contains(context, "\\\"password\\\": [REDACTED:PASSWORD]"), "credential key prefix preserved")
+    # 4: embedded Markdown fences receive a strictly longer outer fence.
+    require_truthy(contains(context_md, "````text"), "longer Markdown fence emitted")
+    # 5: extensionless files containing NUL bytes are not packed.
+    assert_equal(contains(context, "BINARY_SECRET_MARKER"), 0)
+
+    # 6: root and trailing-slash selectors work as documented.
+    assert_equal(contains(context, "EXCLUDED_DOC_MARKER"), 0)
+    require_truthy(contains(context, "src/sample.txt"), "root include selects nested source")
+    # 7: traversal never follows repository symlinks.
+    assert_equal(contains(context, "SYMLINK_SECRET_MARKER"), 0)
+    symlink_res := run_scent_in_repo(["pack", "--task", "symlink", "--include", "src/outside-link", "--dry-run", "--json"])
+    assert_equal(symlink_res.exitcode, 2)
+    require_truthy(contains(symlink_res.stdout, "cannot contain a symlink"), "explicit symlink selector rejected")
+    # 8: an existing output directory is excluded from the next pack.
+    assert_equal(contains(context, "STALE_OUTPUT_MARKER"), 0)
+    # 9: pack is mandatory instead of silently accepting a flag-only invocation.
+    missing_pack_res := run_scent_in_repo(["--task", "missing subcommand", "--dry-run", "--json"])
+    assert_equal(missing_pack_res.exitcode, 2)
+    require_truthy(contains(missing_pack_res.stdout, "expected subcommand: pack"), "missing subcommand rejected")
+
+    # 10: budget-excluded files have one manifest decision and no stale redaction audit.
+    _ = run_cmd("cd " + shq(bug_repo) + " && printf '%0600d' 0 | tr '0' 'a' > focus/a.txt")
+    _ = run_cmd("cd " + shq(bug_repo) + " && printf '%s\\n' 'password=budget-secret' > focus/b.txt")
+    budget_res := run_scent_in_repo([
+        "pack", "--task", "budget audit", "--out", budget_out,
+        "--include", "focus", "--budget", "1555", "--max-files", "3",
+        "--format", "json", "--json"
+    ])
+    assert_equal(budget_res.exitcode, 0)
+    budget_manifest := read_file(budget_out + "/manifest.json")
+    budget_redactions := read_file(budget_out + "/redactions.json")
+    assert_equal(len(split(budget_manifest, "\"path\": \"focus/b.txt\"")) - 1, 1)
+    assert_equal(contains(budget_redactions, "focus/b.txt"), 0)
+
+    # Explicit directories are rescanned even if the bounded baseline traversal saw them.
+    _ = run_cmd("mkdir -p " + shq(bug_repo + "/a_bulk") + " " + shq(bug_repo + "/z_focus"))
+    _ = run_cmd("printf '%s\\n' 'a_bulk/' > " + shq(bug_repo + "/.gitignore"))
+    _ = run_cmd("i=1; while [ $i -le 2001 ]; do : > " + shq(bug_repo + "/a_bulk") + "/file-$i.txt; i=$((i + 1)); done")
+    _ = run_cmd("printf '%s\\n' 'LATE_INCLUDE_MARKER' > " + shq(bug_repo + "/z_focus/wanted.txt"))
+    late_res := run_scent_in_repo([
+        "pack", "--task", "late include", "--out", late_out,
+        "--include", "z_focus", "--exclude", "a_bulk", "--max-files", "1", "--format", "json", "--json"
+    ])
+    assert_equal(late_res.exitcode, 0)
+    late_context := read_file(late_out + "/context.json")
+    require_truthy(contains(late_context, "LATE_INCLUDE_MARKER"), "explicit include survives baseline traversal cap")
 }
 
 main()
