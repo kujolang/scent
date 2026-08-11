@@ -42,4 +42,5 @@ This Kujo branch focuses on:
 - Review `redactions.json` in CI for coverage drift.
 - Treat redaction as best-effort; do not assume it guarantees zero sensitive leakage.
 - Keep `--include` and `--exclude` paths inside the repository being packed. Scent rejects parent-directory traversal and absolute selectors outside the discovered root.
+- Scent rejects explicit selectors containing symlinks, skips symlinks during traversal, and omits NUL-bearing extensionless binary files.
 - Never commit generated packs that include proprietary or secret material.

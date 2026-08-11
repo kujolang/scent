@@ -71,6 +71,10 @@ The structured context payload includes:
 - Run `scent` from the repository you want to pack; it discovers the repo root from the current working directory.
 - The `--target` flag selects the downstream model target, not a repo path.
 - Repeated include/exclude flags are preserved as ordered lists. Selectors cannot contain `..`, and absolute selectors must remain inside the discovered repo root.
+- Selectors normalize `.` and trailing slashes. Selectors containing symlink segments are rejected, and repository traversal does not follow symlinks.
+- An explicit include directory receives its own bounded traversal, so it remains effective when the baseline candidate scan reaches its cap.
+- Existing output artifacts are overwritten, while an output directory inside the repository is excluded from candidate selection for that run.
+- Extensionless files containing NUL bytes are treated as binary and omitted from pack contents.
 - `pack --dry-run` reports `estimated_tokens` and `included_files` without writing output files.
 - Redaction coverage is reviewable in `redactions.json`; treat it as best-effort, pattern-based protection rather than a secrecy guarantee. Current coverage includes key/value secret lines, private-key blocks, authorization headers, JWT-shaped values, OpenAI-style `sk-` tokens, GitHub token prefixes, AWS access-key IDs, and Stripe live secret keys.
 

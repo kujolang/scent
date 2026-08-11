@@ -6,6 +6,7 @@ All notable changes to Scent are documented here.
 
 - Align README version badge with the stable CLI/runtime metadata.
 - Add launch readiness spec and deterministic Eval suite for prelaunch review evidence.
+- Fix ten verified context-pack defects covering mandatory subcommands, selector normalization, symlink and binary traversal safety, bounded explicit includes, reusable output directories, credential-line parsing, Markdown fence containment, and budget manifest/redaction consistency.
 
 ## [1.0.0] - 2026-08-08
 

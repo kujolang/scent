@@ -17,7 +17,9 @@ Prioritize copyable examples over tests: examples should model the most token-ef
 - Deterministic selection and pattern-based redaction pipeline enabled
 - Repeated `--include` and `--exclude` flags are preserved as ordered selector lists
 - Include/exclude selectors are constrained to the discovered repository root
+- Root (`.`) and trailing-slash selectors are normalized, and selectors containing symlinks are rejected
 - Artifact write path verified on safe local smoke data
+- Reusing an output directory overwrites its artifacts without packing stale output back into the next run
 - `pack --dry-run` reports context estimates without writing files
 - Source layout: the canonical Kujo entrypoint is still `scent.kujo` at the repo root; generated `out/`, `.scent/`, and `target/` directories are ignored and should not be committed.
 
@@ -68,6 +70,7 @@ kujo run /path/to/scent/scent.kujo pack \
 Scent discovers the repo root from the current working directory, so run it inside the repository you want to pack.
 The `--target` flag selects the downstream model target; it does not select a repo path.
 Repeat `--include` or `--exclude` to focus multiple paths. These selectors must be relative to the discovered repository root, or absolute paths inside that root.
+Scent does not follow repository symlinks, and extensionless files containing NUL bytes are treated as binary.
 
 ## Position in Kujo
 
