@@ -19,7 +19,8 @@ Prioritize copyable examples over tests: examples should model the most token-ef
 - Include/exclude selectors are constrained to the discovered repository root
 - Root (`.`) and trailing-slash selectors are normalized, and selectors containing symlinks are rejected
 - Artifact write path verified on safe local smoke data
-- Reusing an output directory overwrites its artifacts without packing stale output back into the next run
+- Reusing an output directory overwrites current artifacts, removes stale optional context formats, and does not repack prior output
+- Artifact writes replace a pre-existing artifact symlink instead of following it to another file.
 - `pack --dry-run` reports context estimates without writing files
 - Source layout: the canonical Kujo entrypoint is still `scent.kujo` at the repo root; generated `out/`, `.scent/`, and `target/` directories are ignored and should not be committed.
 
@@ -108,10 +109,12 @@ scent pack --task <text>
 ## Security Model
 
 - Redacts common secret/token patterns before pack output.
+- Applies recognized secret patterns to task text as well as selected file content before emitting artifacts.
 - Treat redaction as pattern-based and review `redactions.json`; it reduces exposure but does not guarantee perfect secrecy.
 - Covers common key/value secret lines plus JWT-shaped values, OpenAI-style `sk-` tokens, GitHub token prefixes, AWS access-key IDs, Stripe live secret keys, private-key blocks, and authorization headers.
 - Avoids shell interpolation from user-provided task text.
 - Keeps output bounded by explicit byte/token heuristics and repository-scoped include/exclude selectors.
+- Enforces `--max-file-bytes` as a UTF-8 byte limit without splitting a multibyte character.
 
 See `SECURITY.md` for reporting and hardening guidance.
 

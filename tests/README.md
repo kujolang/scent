@@ -5,7 +5,12 @@ run by the Kujo test runner without a separate fixture harness.
 
 The inline suite includes regression coverage for selector scope, symlink and
 binary traversal, output reuse, redaction parsing, Markdown containment, bounded
-explicit includes, and budget manifest/redaction consistency.
+explicit includes, budget manifest/redaction consistency, UTF-8 byte clipping,
+task-text redaction, exact and deduplicated Git path state, artifact selection consistency,
+unreadable-file provenance, package/Cargo command discovery, and artifact
+symlink replacement.
+Fallback traversal and detected command ordering are also checked for stable
+alphabetical output.
 
 Release smoke commands:
 

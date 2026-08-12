@@ -43,4 +43,6 @@ This Kujo branch focuses on:
 - Treat redaction as best-effort; do not assume it guarantees zero sensitive leakage.
 - Keep `--include` and `--exclude` paths inside the repository being packed. Scent rejects parent-directory traversal and absolute selectors outside the discovered root.
 - Scent rejects explicit selectors containing symlinks, skips symlinks during traversal, and omits NUL-bearing extensionless binary files.
+- Scent applies its recognized token patterns before clipping selected file content and before emitting task text or command flags.
+- Scent replaces symlinks found at artifact filenames before writing, preventing a reused output directory from redirecting an artifact write to another file.
 - Never commit generated packs that include proprietary or secret material.

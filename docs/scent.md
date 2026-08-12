@@ -73,10 +73,14 @@ The structured context payload includes:
 - Repeated include/exclude flags are preserved as ordered lists. Selectors cannot contain `..`, and absolute selectors must remain inside the discovered repo root.
 - Selectors normalize `.` and trailing slashes. Selectors containing symlink segments are rejected, and repository traversal does not follow symlinks.
 - An explicit include directory receives its own bounded traversal, so it remains effective when the baseline candidate scan reaches its cap.
-- Existing output artifacts are overwritten, while an output directory inside the repository is excluded from candidate selection for that run.
+- Existing output artifacts are overwritten, stale `context.md`/`context.json` files from a different requested format are removed, and an output directory inside the repository is excluded from candidate selection for that run.
+- A pre-existing symlink at an artifact filename is replaced rather than followed during output writes.
 - Extensionless files containing NUL bytes are treated as binary and omitted from pack contents.
+- File clipping occurs after redaction and treats `--max-file-bytes` as a UTF-8 byte limit.
 - `pack --dry-run` reports `estimated_tokens` and `included_files` without writing output files.
 - Redaction coverage is reviewable in `redactions.json`; treat it as best-effort, pattern-based protection rather than a secrecy guarantee. Current coverage includes key/value secret lines, private-key blocks, authorization headers, JWT-shaped values, OpenAI-style `sk-` tokens, GitHub token prefixes, AWS access-key IDs, and Stripe live secret keys.
+- Recognized patterns in task text are sanitized before task, command-flag, and redaction metadata are emitted.
+- Git path lists use NUL-delimited porcelain output so whitespace and newline-bearing names retain exact identity across Git metadata and file selection.
 
 ## Context-Layer Positioning
 

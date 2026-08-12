@@ -431,15 +431,19 @@ func split_lines(text) {
     return out
 }
 
-func push_unique(items, seen, value) {
-    if value == "" {
-        return items
+func split_nul_records(text) {
+    nul := parse_json("\"\\u0000\"")
+    records := split(to_string(text), nul)
+    out := []
+    i := 0
+    while i < len(records) {
+        record := records[i]
+        if record != "" {
+            out = push(out, record)
+        }
+        i = i + 1
     }
-    if has_key(seen, value) == 0 {
-        seen[value] = 1
-        items = push(items, value)
-    }
-    return items
+    return out
 }
 
 func inspect_git(repo_root) {
@@ -455,17 +459,17 @@ func inspect_git(repo_root) {
         "diff_summary": []
     }
 
-    staged_res := run_process(["git", "-C", repo_root, "diff", "--name-only", "--cached"])
+    staged_res := run_process(["git", "-C", repo_root, "diff", "--name-only", "--cached", "-z"])
     if !staged_res.success {
         return result
     }
 
-    unstaged_res := run_process(["git", "-C", repo_root, "diff", "--name-only"])
+    unstaged_res := run_process(["git", "-C", repo_root, "diff", "--name-only", "-z"])
     if !unstaged_res.success {
         return result
     }
 
-    untracked_res := run_process(["git", "-C", repo_root, "ls-files", "--others", "--exclude-standard"])
+    untracked_res := run_process(["git", "-C", repo_root, "ls-files", "--others", "--exclude-standard", "-z"])
     if !untracked_res.success {
         return result
     }
@@ -493,43 +497,61 @@ func inspect_git(repo_root) {
     untracked_seen := {}
     changed_seen := {}
 
-    staged_files := split_lines(to_string(staged_res.stdout))
-    unstaged_files := split_lines(to_string(unstaged_res.stdout))
-    untracked_files := split_lines(to_string(untracked_res.stdout))
+    staged_files := split_nul_records(to_string(staged_res.stdout))
+    unstaged_files := split_nul_records(to_string(unstaged_res.stdout))
+    untracked_files := split_nul_records(to_string(untracked_res.stdout))
 
     idx := 0
     while idx < len(staged_files) {
-        path := trim(staged_files[idx])
+        path := staged_files[idx]
         idx = idx + 1
         if path == "" {
             continue
         }
-        result["staged_files"] = push_unique(result["staged_files"], staged_seen, path)
-        result["changed_files"] = push_unique(result["changed_files"], changed_seen, path)
+        if has_key(staged_seen, path) == 0 {
+            staged_seen[path] = 1
+            result["staged_files"] = push(result["staged_files"], path)
+        }
+        if has_key(changed_seen, path) == 0 {
+            changed_seen[path] = 1
+            result["changed_files"] = push(result["changed_files"], path)
+        }
         result["diff_summary"] = push(result["diff_summary"], "staged: " + path)
     }
 
     idx := 0
     while idx < len(unstaged_files) {
-        path := trim(unstaged_files[idx])
+        path := unstaged_files[idx]
         idx = idx + 1
         if path == "" {
             continue
         }
-        result["unstaged_files"] = push_unique(result["unstaged_files"], unstaged_seen, path)
-        result["changed_files"] = push_unique(result["changed_files"], changed_seen, path)
+        if has_key(unstaged_seen, path) == 0 {
+            unstaged_seen[path] = 1
+            result["unstaged_files"] = push(result["unstaged_files"], path)
+        }
+        if has_key(changed_seen, path) == 0 {
+            changed_seen[path] = 1
+            result["changed_files"] = push(result["changed_files"], path)
+        }
         result["diff_summary"] = push(result["diff_summary"], "unstaged: " + path)
     }
 
     idx = 0
     while idx < len(untracked_files) {
-        path := trim(untracked_files[idx])
+        path := untracked_files[idx]
         idx = idx + 1
         if path == "" {
             continue
         }
-        result["untracked_files"] = push_unique(result["untracked_files"], untracked_seen, path)
-        result["changed_files"] = push_unique(result["changed_files"], changed_seen, path)
+        if has_key(untracked_seen, path) == 0 {
+            untracked_seen[path] = 1
+            result["untracked_files"] = push(result["untracked_files"], path)
+        }
+        if has_key(changed_seen, path) == 0 {
+            changed_seen[path] = 1
+            result["changed_files"] = push(result["changed_files"], path)
+        }
         result["diff_summary"] = push(result["diff_summary"], "untracked: " + path)
     }
 
@@ -678,7 +700,7 @@ func walk_collect(repo_root, current, max_candidates, visited_dirs, depth) {
     } except e {
         return files
     }
-    sort(entries)
+    entries = sort(entries)
 
     idx := 0
     while idx < len(entries) {
@@ -1080,11 +1102,34 @@ func select_candidates(opts, repo_root, candidates) {
     return selected
 }
 
+func utf8_byte_len(content) {
+    encoded := encode_base64(to_string(content))
+    padding := 0
+    if ends_with(encoded, "==") {
+        padding = 2
+    } else if ends_with(encoded, "=") {
+        padding = 1
+    }
+    return (len(encoded) / 4) * 3 - padding
+}
+
 func clip_text(content, limit_bytes) {
-    if len(content) <= limit_bytes {
+    if utf8_byte_len(content) <= limit_bytes {
         return {"content": content, "truncated": false}
     }
-    return {"content": substring(content, 0, limit_bytes), "truncated": true}
+
+    low := 0
+    high := len(content)
+    while low < high {
+        middle := (low + high + 1) / 2
+        prefix := substring(content, 0, middle)
+        if utf8_byte_len(prefix) <= limit_bytes {
+            low = middle
+        } else {
+            high = middle - 1
+        }
+    }
+    return {"content": substring(content, 0, low), "truncated": true}
 }
 
 func normalize_credential_key(raw_key) {
@@ -1349,9 +1394,22 @@ func apply_budget(budget, reserved, selected_files) {
 func discover_commands(repo_root) {
     commands := []
 
-    if path_exists(path_join(repo_root, "Cargo.toml")) {
-        commands = push(commands, "cargo test")
-        commands = push(commands, "cargo fmt -- --check")
+    cargo_path := path_join(repo_root, "Cargo.toml")
+    if path_exists(cargo_path) {
+        cargo_read := read_text_file(cargo_path)
+        cargo_valid := false
+        if cargo_read["ok"] {
+            try {
+                cargo_doc := parse_toml(cargo_read["content"])
+                cargo_valid = type(cargo_doc) == "dict"
+            } except cargo_parse_error {
+                cargo_valid = false
+            }
+        }
+        if cargo_valid {
+            commands = push(commands, "cargo test")
+            commands = push(commands, "cargo fmt -- --check")
+        }
     }
 
     package_path := path_join(repo_root, "package.json")
@@ -1367,9 +1425,9 @@ func discover_commands(repo_root) {
                 parse_ok = false
             }
 
-            if parse_ok && type(parsed) == "Dict" && has_key(parsed, "scripts") {
+            if parse_ok && type(parsed) == "dict" && has_key(parsed, "scripts") {
                 scripts := parsed["scripts"]
-                if type(scripts) == "Dict" {
+                if type(scripts) == "dict" {
                     if has_key(scripts, "test") {
                         commands = push(commands, "npm test")
                     }
@@ -1443,8 +1501,7 @@ func discover_commands(repo_root) {
         }
         k = k + 1
     }
-    sort(uniq)
-    return uniq
+    return sort(uniq)
 }
 
 func target_notes(target) {
@@ -1633,7 +1690,30 @@ func ensure_dir(path) {
     return true
 }
 
+func path_entry_exists(path) {
+    parent := dirname(path)
+    if !path_exists(parent) || !path_is_dir(parent) {
+        return false
+    }
+    try {
+        return contains(list_dir(parent), basename(path))
+    } except e {
+        return false
+    }
+}
+
 func write_text(path, content) {
+    if path_entry_exists(path) && path_is_symlink(path) {
+        try {
+            removed := delete_file(path)
+            if !removed {
+                return err("failed to replace symlink artifact: " + path, 4)
+            }
+        } except e {
+            return err("failed to replace symlink artifact " + path + ": " + to_string(e), 4)
+        }
+    }
+
     parent := dirname(path)
     if !ensure_dir(parent) {
         return err("failed to create parent directory for " + path, 4)
@@ -1644,6 +1724,25 @@ func write_text(path, content) {
         return err("failed to write " + path, 4)
     }
     return ok(true)
+}
+
+func delete_stale_file(path) {
+    if !path_entry_exists(path) {
+        return ok(true)
+    }
+    if !path_is_file(path) && !path_is_symlink(path) {
+        return err("cannot replace stale artifact because it is not a file: " + path, 4)
+    }
+
+    try {
+        removed := delete_file(path)
+        if removed {
+            return ok(true)
+        }
+        return err("failed to delete stale artifact: " + path, 4)
+    } except e {
+        return err("failed to delete stale artifact " + path + ": " + to_string(e), 4)
+    }
 }
 
 func summary_payload(result) {
@@ -1664,7 +1763,8 @@ func run_pack(opts, raw_flags) {
     repo_root := detect_repo_root(cwd)
     git_info := inspect_git(repo_root)
     instruction_files := discover_instruction_files(repo_root)
-    task_text := to_string(opts["task"])
+    task_redacted := redact_text("[task]", to_string(opts["task"]))
+    task_text := task_redacted["content"]
     budget_value := to_int(opts["budget"])
     max_file_bytes_value := to_int(opts["max_file_bytes"])
     target_value := to_string(opts["target"])
@@ -1712,22 +1812,24 @@ func run_pack(opts, raw_flags) {
 
     selected_files := []
     redactions_by_path := {}
+    read_failures := {}
 
     loop_idx := 0
     while loop_idx < len(selected_candidates) {
         selected_candidate := selected_candidates[loop_idx]
         read_res := read_text_file(selected_candidate["path"])
         if !read_res["ok"] {
+            read_failures[selected_candidate["rel_path"]] = read_res["error"]
             loop_idx = loop_idx + 1
             continue
         }
 
-        clipped := clip_text(read_res["content"], max_file_bytes_value)
-        redacted := redact_text(selected_candidate["rel_path"], clipped["content"])
+        redacted := redact_text(selected_candidate["rel_path"], read_res["content"])
+        clipped := clip_text(redacted["content"], max_file_bytes_value)
 
         redactions_by_path[selected_candidate["rel_path"]] = redacted["redactions"]
 
-        content := redacted["content"]
+        content := clipped["content"]
         selected_files = push(selected_files, {
             "path": selected_candidate["rel_path"],
             "reason": selected_candidate["selection_reason"],
@@ -1746,7 +1848,7 @@ func run_pack(opts, raw_flags) {
     included_files := budget_result["files"]
     manifest := budget_result["manifest"]
 
-    redactions := []
+    redactions := task_redacted["redactions"]
     loop_idx = 0
     while loop_idx < len(included_files) {
         final_file := included_files[loop_idx]
@@ -1771,10 +1873,12 @@ func run_pack(opts, raw_flags) {
     }
 
     selected_map := {}
+    selected_reason_map := {}
     loop_idx = 0
     while loop_idx < len(included_files) {
         included_file := included_files[loop_idx]
         selected_map[included_file["path"]] = 1
+        selected_reason_map[included_file["path"]] = included_file["reason"]
         loop_idx = loop_idx + 1
     }
 
@@ -1793,12 +1897,12 @@ func run_pack(opts, raw_flags) {
         candidate_item := candidates[loop_idx]
         if has_key(selected_map, candidate_item["rel_path"]) {
             candidate_item["selected"] = true
-            if candidate_item["selection_reason"] == "" {
-                candidate_item["selection_reason"] = "selected"
-            }
+            candidate_item["selection_reason"] = selected_reason_map[candidate_item["rel_path"]]
         } else {
             candidate_item["selected"] = false
-            if candidate_item["selection_reason"] == "" {
+            if has_key(read_failures, candidate_item["rel_path"]) {
+                candidate_item["selection_reason"] = "excluded because file could not be read: " + to_string(read_failures[candidate_item["rel_path"]])
+            } else if candidate_item["selection_reason"] == "" {
                 candidate_item["selection_reason"] = "not selected by deterministic relevance"
             }
             if has_key(manifested_file_map, candidate_item["rel_path"]) == 0 {
@@ -1813,6 +1917,7 @@ func run_pack(opts, raw_flags) {
                 })
             }
         }
+        candidates[loop_idx] = candidate_item
         loop_idx = loop_idx + 1
     }
 
@@ -1948,6 +2053,14 @@ func run_pack(opts, raw_flags) {
         exit_code = 1
     }
 
+    sanitized_flags := []
+    loop_idx = 0
+    while loop_idx < len(raw_flags) {
+        sanitized_flag := redact_text("[command]", to_string(raw_flags[loop_idx]))
+        sanitized_flags = push(sanitized_flags, sanitized_flag["content"])
+        loop_idx = loop_idx + 1
+    }
+
     metadata := {
         "tool": "scent",
         "version": VERSION,
@@ -1958,7 +2071,7 @@ func run_pack(opts, raw_flags) {
         "git_commit": git_info["commit"],
         "dirty": git_info["dirty"],
         "command": "scent pack",
-        "flags": raw_flags,
+        "flags": sanitized_flags,
         "exit_code": exit_code
     }
 
@@ -1966,6 +2079,18 @@ func run_pack(opts, raw_flags) {
     context_json_path := null
 
     if !opts["dry_run"] {
+        if format_value == "md" {
+            stale_json := delete_stale_file(path_join(out_dir, "context.json"))
+            if !stale_json["ok"] {
+                return stale_json
+            }
+        } else if format_value == "json" {
+            stale_markdown := delete_stale_file(path_join(out_dir, "context.md"))
+            if !stale_markdown["ok"] {
+                return stale_markdown
+            }
+        }
+
         if format_value == "md" || format_value == "both" {
             context_md_path = path_join(out_dir, "context.md")
             w1 := write_text(context_md_path, markdown)
@@ -2544,6 +2669,582 @@ test "ten bug regressions" {
     assert_equal(late_res.exitcode, 0)
     late_context := read_file(late_out + "/context.json")
     require_truthy(contains(late_context, "LATE_INCLUDE_MARKER"), "explicit include survives baseline traversal cap")
+}
+
+test "redaction runs before file-size clipping" {
+    audit_scope := true
+    func audit_shq(value) {
+        text := to_string(value)
+        return "'" + replace(text, "'", "'\"'\"'") + "'"
+    }
+
+    func audit_run(command) {
+        result := execute_status(command, {"timeout_ms": 120000})
+        if type(result) == "struct" {
+            return result
+        }
+        return {"success": false, "exitcode": 1, "stdout": "", "stderr": "invalid execute_status result"}
+    }
+
+    func audit_run_scent(repo, argv) {
+        cwd := os_getcwd()
+        kujo_bin := env_or("KUJO_BIN", path_join(cwd, "../kujo/target/release/kujo"))
+        scent_script := env_or("SCENT_SCRIPT", path_join(cwd, "scent.kujo"))
+        command := "cd " + audit_shq(repo) + " && " + audit_shq(kujo_bin) + " run " + audit_shq(scent_script)
+        i := 0
+        while i < len(argv) {
+            command = command + " " + audit_shq(argv[i])
+            i = i + 1
+        }
+        return audit_run(command)
+    }
+    root := "/tmp/scent_regression_redact_clip"
+    repo := root + "/repo"
+    out := root + "/out"
+    _ = audit_run("rm -rf " + audit_shq(root) + " && mkdir -p " + audit_shq(repo) + " && cd " + audit_shq(repo) + " && git init -q")
+    _ = write_file(repo + "/secret.txt", "sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ123456\n", true)
+
+    result := audit_run_scent(repo, [
+        "pack", "--task", "secret clipping", "--include", "secret.txt",
+        "--out", out, "--max-files", "1", "--max-file-bytes", "10",
+        "--format", "both", "--json"
+    ])
+    assert_equal(result.exitcode, 0)
+    context := read_file(out + "/context.json")
+    assert_equal(contains(context, "sk-ABCDEFG"), 0)
+}
+
+test "max-file-bytes is a UTF-8 byte limit" {
+    audit_scope := true
+    func audit_shq(value) {
+        text := to_string(value)
+        return "'" + replace(text, "'", "'\"'\"'") + "'"
+    }
+
+    func audit_run(command) {
+        result := execute_status(command, {"timeout_ms": 120000})
+        if type(result) == "struct" {
+            return result
+        }
+        return {"success": false, "exitcode": 1, "stdout": "", "stderr": "invalid execute_status result"}
+    }
+
+    func audit_run_scent(repo, argv) {
+        cwd := os_getcwd()
+        kujo_bin := env_or("KUJO_BIN", path_join(cwd, "../kujo/target/release/kujo"))
+        scent_script := env_or("SCENT_SCRIPT", path_join(cwd, "scent.kujo"))
+        command := "cd " + audit_shq(repo) + " && " + audit_shq(kujo_bin) + " run " + audit_shq(scent_script)
+        i := 0
+        while i < len(argv) {
+            command = command + " " + audit_shq(argv[i])
+            i = i + 1
+        }
+        return audit_run(command)
+    }
+    root := "/tmp/scent_regression_utf8_bytes"
+    repo := root + "/repo"
+    out := root + "/out"
+    _ = audit_run("rm -rf " + audit_shq(root) + " && mkdir -p " + audit_shq(repo) + " && cd " + audit_shq(repo) + " && git init -q")
+    _ = write_file(repo + "/unicode.txt", "12345678éZ", true)
+
+    result := audit_run_scent(repo, [
+        "pack", "--task", "unicode bytes", "--include", "unicode.txt",
+        "--out", out, "--max-files", "1", "--max-file-bytes", "10",
+        "--format", "json", "--json"
+    ])
+    assert_equal(result.exitcode, 0)
+    context := parse_json(read_file(out + "/context.json"))
+    assert_equal(context["selected_files"][0]["content"], "12345678é")
+    assert_equal(context["selected_files"][0]["truncated"], true)
+}
+
+test "output reuse removes stale optional context artifacts" {
+    audit_scope := true
+    func audit_shq(value) {
+        text := to_string(value)
+        return "'" + replace(text, "'", "'\"'\"'") + "'"
+    }
+
+    func audit_run(command) {
+        result := execute_status(command, {"timeout_ms": 120000})
+        if type(result) == "struct" {
+            return result
+        }
+        return {"success": false, "exitcode": 1, "stdout": "", "stderr": "invalid execute_status result"}
+    }
+
+    func audit_run_scent(repo, argv) {
+        cwd := os_getcwd()
+        kujo_bin := env_or("KUJO_BIN", path_join(cwd, "../kujo/target/release/kujo"))
+        scent_script := env_or("SCENT_SCRIPT", path_join(cwd, "scent.kujo"))
+        command := "cd " + audit_shq(repo) + " && " + audit_shq(kujo_bin) + " run " + audit_shq(scent_script)
+        i := 0
+        while i < len(argv) {
+            command = command + " " + audit_shq(argv[i])
+            i = i + 1
+        }
+        return audit_run(command)
+    }
+    root := "/tmp/scent_regression_output_reuse"
+    repo := root + "/repo"
+    out := root + "/out"
+    _ = audit_run("rm -rf " + audit_shq(root) + " && mkdir -p " + audit_shq(repo) + " && cd " + audit_shq(repo) + " && git init -q")
+    _ = write_file(repo + "/README.md", "# fixture\n", true)
+
+    both_result := audit_run_scent(repo, [
+        "pack", "--task", "reuse", "--include", "README.md", "--out", out,
+        "--max-files", "1", "--format", "both", "--json"
+    ])
+    assert_equal(both_result.exitcode, 0)
+    assert_equal(file_exists(out + "/context.md"), true)
+    assert_equal(file_exists(out + "/context.json"), true)
+
+    md_result := audit_run_scent(repo, [
+        "pack", "--task", "reuse", "--include", "README.md", "--out", out,
+        "--max-files", "1", "--format", "md", "--json"
+    ])
+    assert_equal(md_result.exitcode, 0)
+    assert_equal(file_exists(out + "/context.md"), true)
+    assert_equal(file_exists(out + "/context.json"), false)
+
+    json_result := audit_run_scent(repo, [
+        "pack", "--task", "reuse", "--include", "README.md", "--out", out,
+        "--max-files", "1", "--format", "json", "--json"
+    ])
+    assert_equal(json_result.exitcode, 0)
+    assert_equal(file_exists(out + "/context.md"), false)
+    assert_equal(file_exists(out + "/context.json"), true)
+}
+
+test "git metadata preserves unusual path names exactly" {
+    audit_scope := true
+    func audit_shq(value) {
+        text := to_string(value)
+        return "'" + replace(text, "'", "'\"'\"'") + "'"
+    }
+
+    func audit_run(command) {
+        result := execute_status(command, {"timeout_ms": 120000})
+        if type(result) == "struct" {
+            return result
+        }
+        return {"success": false, "exitcode": 1, "stdout": "", "stderr": "invalid execute_status result"}
+    }
+
+    func audit_run_scent(repo, argv) {
+        cwd := os_getcwd()
+        kujo_bin := env_or("KUJO_BIN", path_join(cwd, "../kujo/target/release/kujo"))
+        scent_script := env_or("SCENT_SCRIPT", path_join(cwd, "scent.kujo"))
+        command := "cd " + audit_shq(repo) + " && " + audit_shq(kujo_bin) + " run " + audit_shq(scent_script)
+        i := 0
+        while i < len(argv) {
+            command = command + " " + audit_shq(argv[i])
+            i = i + 1
+        }
+        return audit_run(command)
+    }
+    root := "/tmp/scent_regression_git_names"
+    repo := root + "/repo"
+    out := root + "/out"
+    newline_name := "odd\nname.txt"
+    spaced_name := " leading and trailing .txt "
+    _ = audit_run("rm -rf " + audit_shq(root) + " && mkdir -p " + audit_shq(repo) + " && cd " + audit_shq(repo) + " && git init -q && git config user.name Test && git config user.email test@example.com")
+    _ = write_file(repo + "/" + newline_name, "seed", true)
+    _ = write_file(repo + "/" + spaced_name, "seed", true)
+    commit_result := audit_run("cd " + audit_shq(repo) + " && git add . && git commit -q -m seed")
+    assert_equal(commit_result.exitcode, 0)
+    _ = write_file(repo + "/" + newline_name, "changed", true)
+    _ = write_file(repo + "/" + spaced_name, "changed", true)
+
+    result := audit_run_scent(repo, [
+        "pack", "--task", "git paths", "--changed", "--out", out,
+        "--max-files", "3", "--format", "json", "--json"
+    ])
+    assert_equal(result.exitcode, 0)
+    context := parse_json(read_file(out + "/context.json"))
+    assert_equal(contains(context["changed_files"], newline_name), true)
+    assert_equal(contains(context["changed_files"], spaced_name), true)
+    files := parse_json(read_file(out + "/files.json"))
+    assert_equal(files[0]["path"], spaced_name)
+    assert_equal(files[1]["path"], newline_name)
+    assert_equal(files[0]["is_changed"], 1)
+    assert_equal(files[1]["is_changed"], 1)
+}
+
+test "recognized secrets in task text are redacted from artifacts" {
+    audit_scope := true
+    func audit_shq(value) {
+        text := to_string(value)
+        return "'" + replace(text, "'", "'\"'\"'") + "'"
+    }
+
+    func audit_run(command) {
+        result := execute_status(command, {"timeout_ms": 120000})
+        if type(result) == "struct" {
+            return result
+        }
+        return {"success": false, "exitcode": 1, "stdout": "", "stderr": "invalid execute_status result"}
+    }
+
+    func audit_run_scent(repo, argv) {
+        cwd := os_getcwd()
+        kujo_bin := env_or("KUJO_BIN", path_join(cwd, "../kujo/target/release/kujo"))
+        scent_script := env_or("SCENT_SCRIPT", path_join(cwd, "scent.kujo"))
+        command := "cd " + audit_shq(repo) + " && " + audit_shq(kujo_bin) + " run " + audit_shq(scent_script)
+        i := 0
+        while i < len(argv) {
+            command = command + " " + audit_shq(argv[i])
+            i = i + 1
+        }
+        return audit_run(command)
+    }
+    root := "/tmp/scent_regression_task_secret"
+    repo := root + "/repo"
+    out := root + "/out"
+    secret := "sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ123456"
+    _ = audit_run("rm -rf " + audit_shq(root) + " && mkdir -p " + audit_shq(repo) + " && cd " + audit_shq(repo) + " && git init -q")
+    _ = write_file(repo + "/README.md", "# fixture\n", true)
+
+    result := audit_run_scent(repo, [
+        "pack", "--task", "audit " + secret, "--include", "README.md", "--out", out,
+        "--max-files", "1", "--format", "both", "--json"
+    ])
+    assert_equal(result.exitcode, 0)
+    artifacts := ["context.md", "context.json", "manifest.json", "files.json", "redactions.json", "metadata.json"]
+    i := 0
+    while i < len(artifacts) {
+        assert_equal(contains(read_file(out + "/" + artifacts[i]), secret), 0)
+        i = i + 1
+    }
+    assert_equal(contains(read_file(out + "/context.json"), "[REDACTED:TOKEN]"), 1)
+}
+
+test "files inventory agrees with selected context files" {
+    audit_scope := true
+    func audit_shq(value) {
+        text := to_string(value)
+        return "'" + replace(text, "'", "'\"'\"'") + "'"
+    }
+
+    func audit_run(command) {
+        result := execute_status(command, {"timeout_ms": 120000})
+        if type(result) == "struct" {
+            return result
+        }
+        return {"success": false, "exitcode": 1, "stdout": "", "stderr": "invalid execute_status result"}
+    }
+
+    func audit_run_scent(repo, argv) {
+        cwd := os_getcwd()
+        kujo_bin := env_or("KUJO_BIN", path_join(cwd, "../kujo/target/release/kujo"))
+        scent_script := env_or("SCENT_SCRIPT", path_join(cwd, "scent.kujo"))
+        command := "cd " + audit_shq(repo) + " && " + audit_shq(kujo_bin) + " run " + audit_shq(scent_script)
+        i := 0
+        while i < len(argv) {
+            command = command + " " + audit_shq(argv[i])
+            i = i + 1
+        }
+        return audit_run(command)
+    }
+    root := "/tmp/scent_regression_files_selected"
+    repo := root + "/repo"
+    out := root + "/out"
+    _ = audit_run("rm -rf " + audit_shq(root) + " && mkdir -p " + audit_shq(repo) + " && cd " + audit_shq(repo) + " && git init -q")
+    _ = write_file(repo + "/app.txt", "selected content\n", true)
+
+    result := audit_run_scent(repo, [
+        "pack", "--task", "app", "--include", "app.txt", "--out", out,
+        "--max-files", "1", "--format", "json", "--json"
+    ])
+    assert_equal(result.exitcode, 0)
+    context := parse_json(read_file(out + "/context.json"))
+    files := parse_json(read_file(out + "/files.json"))
+    assert_equal(len(context["selected_files"]), 1)
+    assert_equal(files[0]["path"], context["selected_files"][0]["path"])
+    assert_equal(files[0]["selected"], true)
+    assert_equal(files[0]["selection_reason"], context["selected_files"][0]["reason"])
+}
+
+test "selected unreadable files receive an accurate exclusion reason" {
+    audit_scope := true
+    func audit_shq(value) {
+        text := to_string(value)
+        return "'" + replace(text, "'", "'\"'\"'") + "'"
+    }
+
+    func audit_run(command) {
+        result := execute_status(command, {"timeout_ms": 120000})
+        if type(result) == "struct" {
+            return result
+        }
+        return {"success": false, "exitcode": 1, "stdout": "", "stderr": "invalid execute_status result"}
+    }
+
+    func audit_run_scent(repo, argv) {
+        cwd := os_getcwd()
+        kujo_bin := env_or("KUJO_BIN", path_join(cwd, "../kujo/target/release/kujo"))
+        scent_script := env_or("SCENT_SCRIPT", path_join(cwd, "scent.kujo"))
+        command := "cd " + audit_shq(repo) + " && " + audit_shq(kujo_bin) + " run " + audit_shq(scent_script)
+        i := 0
+        while i < len(argv) {
+            command = command + " " + audit_shq(argv[i])
+            i = i + 1
+        }
+        return audit_run(command)
+    }
+    root := "/tmp/scent_regression_unreadable"
+    repo := root + "/repo"
+    out := root + "/out"
+    _ = audit_run("rm -rf " + audit_shq(root) + " && mkdir -p " + audit_shq(repo) + " && cd " + audit_shq(repo) + " && git init -q")
+    _ = write_file(repo + "/locked.txt", "private", true)
+    _ = audit_run("chmod 000 " + audit_shq(repo + "/locked.txt"))
+
+    result := audit_run_scent(repo, [
+        "pack", "--task", "locked", "--include", "locked.txt", "--out", out,
+        "--max-files", "1", "--format", "json", "--json"
+    ])
+    _ = audit_run("chmod 600 " + audit_shq(repo + "/locked.txt"))
+    metadata := parse_json(read_file(out + "/metadata.json"))
+    assert_equal(metadata["exit_code"], 1)
+    manifest := parse_json(read_file(out + "/manifest.json"))
+    assert_equal(manifest[0]["path"], "locked.txt")
+    assert_equal(manifest[0]["decision"], "exclude")
+    assert_equal(contains(manifest[0]["reason"], "could not be read"), 1)
+}
+
+test "package scripts produce justified validation commands" {
+    audit_scope := true
+    func audit_shq(value) {
+        text := to_string(value)
+        return "'" + replace(text, "'", "'\"'\"'") + "'"
+    }
+
+    func audit_run(command) {
+        result := execute_status(command, {"timeout_ms": 120000})
+        if type(result) == "struct" {
+            return result
+        }
+        return {"success": false, "exitcode": 1, "stdout": "", "stderr": "invalid execute_status result"}
+    }
+
+    func audit_run_scent(repo, argv) {
+        cwd := os_getcwd()
+        kujo_bin := env_or("KUJO_BIN", path_join(cwd, "../kujo/target/release/kujo"))
+        scent_script := env_or("SCENT_SCRIPT", path_join(cwd, "scent.kujo"))
+        command := "cd " + audit_shq(repo) + " && " + audit_shq(kujo_bin) + " run " + audit_shq(scent_script)
+        i := 0
+        while i < len(argv) {
+            command = command + " " + audit_shq(argv[i])
+            i = i + 1
+        }
+        return audit_run(command)
+    }
+
+    root := "/tmp/scent_regression_package_commands"
+    repo := root + "/repo"
+    out := root + "/out"
+    _ = audit_run("rm -rf " + audit_shq(root) + " && mkdir -p " + audit_shq(repo) + " && cd " + audit_shq(repo) + " && git init -q")
+    _ = write_file(repo + "/package.json", "{\"scripts\":{\"test\":\"run-tests\",\"lint\":\"run-lint\",\"build\":\"run-build\"}}", true)
+
+    result := audit_run_scent(repo, [
+        "pack", "--task", "commands", "--include", "package.json", "--out", out,
+        "--max-files", "1", "--format", "json", "--json"
+    ])
+    assert_equal(result.exitcode, 0)
+    context := parse_json(read_file(out + "/context.json"))
+    assert_equal(context["commands"], ["npm run build", "npm run lint", "npm test"])
+}
+
+test "changed-file union deduplicates staged and unstaged paths" {
+    audit_scope := true
+    func audit_shq(value) {
+        text := to_string(value)
+        return "'" + replace(text, "'", "'\"'\"'") + "'"
+    }
+
+    func audit_run(command) {
+        result := execute_status(command, {"timeout_ms": 120000})
+        if type(result) == "struct" {
+            return result
+        }
+        return {"success": false, "exitcode": 1, "stdout": "", "stderr": "invalid execute_status result"}
+    }
+
+    func audit_run_scent(repo, argv) {
+        cwd := os_getcwd()
+        kujo_bin := env_or("KUJO_BIN", path_join(cwd, "../kujo/target/release/kujo"))
+        scent_script := env_or("SCENT_SCRIPT", path_join(cwd, "scent.kujo"))
+        command := "cd " + audit_shq(repo) + " && " + audit_shq(kujo_bin) + " run " + audit_shq(scent_script)
+        i := 0
+        while i < len(argv) {
+            command = command + " " + audit_shq(argv[i])
+            i = i + 1
+        }
+        return audit_run(command)
+    }
+
+    root := "/tmp/scent_regression_changed_union"
+    repo := root + "/repo"
+    out := root + "/out"
+    _ = audit_run("rm -rf " + audit_shq(root) + " && mkdir -p " + audit_shq(repo) + " && cd " + audit_shq(repo) + " && git init -q && git config user.name Test && git config user.email test@example.com")
+    _ = write_file(repo + "/both.txt", "seed", true)
+    _ = audit_run("cd " + audit_shq(repo) + " && git add both.txt && git commit -q -m seed")
+    _ = write_file(repo + "/both.txt", "staged", true)
+    _ = audit_run("cd " + audit_shq(repo) + " && git add both.txt")
+    _ = write_file(repo + "/both.txt", "unstaged", true)
+
+    result := audit_run_scent(repo, [
+        "pack", "--task", "git", "--changed", "--out", out,
+        "--max-files", "2", "--format", "json", "--json"
+    ])
+    assert_equal(result.exitcode, 0)
+    context := parse_json(read_file(out + "/context.json"))
+    assert_equal(context["git"]["staged_files"], ["both.txt"])
+    assert_equal(context["git"]["unstaged_files"], ["both.txt"])
+    assert_equal(context["changed_files"], ["both.txt"])
+}
+
+test "artifact writes replace symlinks instead of following them" {
+    audit_scope := true
+    func audit_shq(value) {
+        text := to_string(value)
+        return "'" + replace(text, "'", "'\"'\"'") + "'"
+    }
+
+    func audit_run(command) {
+        result := execute_status(command, {"timeout_ms": 120000})
+        if type(result) == "struct" {
+            return result
+        }
+        return {"success": false, "exitcode": 1, "stdout": "", "stderr": "invalid execute_status result"}
+    }
+
+    func audit_run_scent(repo, argv) {
+        cwd := os_getcwd()
+        kujo_bin := env_or("KUJO_BIN", path_join(cwd, "../kujo/target/release/kujo"))
+        scent_script := env_or("SCENT_SCRIPT", path_join(cwd, "scent.kujo"))
+        command := "cd " + audit_shq(repo) + " && " + audit_shq(kujo_bin) + " run " + audit_shq(scent_script)
+        i := 0
+        while i < len(argv) {
+            command = command + " " + audit_shq(argv[i])
+            i = i + 1
+        }
+        return audit_run(command)
+    }
+
+    root := "/tmp/scent_regression_artifact_symlink"
+    repo := root + "/repo"
+    out := root + "/out"
+    victim := root + "/victim.json"
+    _ = audit_run("rm -rf " + audit_shq(root) + " && mkdir -p " + audit_shq(repo) + " " + audit_shq(out) + " && cd " + audit_shq(repo) + " && git init -q")
+    _ = write_file(repo + "/app.txt", "safe", true)
+    _ = write_file(victim, "VICTIM_SENTINEL", true)
+    link_result := audit_run("ln -s " + audit_shq(victim) + " " + audit_shq(out + "/context.json"))
+    assert_equal(link_result.exitcode, 0)
+
+    result := audit_run_scent(repo, [
+        "pack", "--task", "safe", "--include", "app.txt", "--out", out,
+        "--max-files", "1", "--format", "json", "--json"
+    ])
+    assert_equal(result.exitcode, 0)
+    assert_equal(read_file(victim), "VICTIM_SENTINEL")
+    assert_equal(path_is_symlink(out + "/context.json"), false)
+    context := parse_json(read_file(out + "/context.json"))
+    assert_equal(context["selected_files"][0]["path"], "app.txt")
+}
+
+test "fallback traversal uses alphabetical directory order" {
+    audit_scope := true
+    func audit_shq(value) {
+        text := to_string(value)
+        return "'" + replace(text, "'", "'\"'\"'") + "'"
+    }
+
+    func audit_run(command) {
+        result := execute_status(command, {"timeout_ms": 120000})
+        if type(result) == "struct" {
+            return result
+        }
+        return {"success": false, "exitcode": 1, "stdout": "", "stderr": "invalid execute_status result"}
+    }
+
+    func audit_run_scent(repo, argv) {
+        cwd := os_getcwd()
+        kujo_bin := env_or("KUJO_BIN", path_join(cwd, "../kujo/target/release/kujo"))
+        scent_script := env_or("SCENT_SCRIPT", path_join(cwd, "scent.kujo"))
+        command := "cd " + audit_shq(repo) + " && " + audit_shq(kujo_bin) + " run " + audit_shq(scent_script)
+        i := 0
+        while i < len(argv) {
+            command = command + " " + audit_shq(argv[i])
+            i = i + 1
+        }
+        return audit_run(command)
+    }
+
+    root := "/tmp/scent_regression_fallback_sort"
+    repo := root + "/repo"
+    out := root + "/out"
+    _ = audit_run("rm -rf " + audit_shq(root) + " && mkdir -p " + audit_shq(repo) + " && cd " + audit_shq(repo) + " && git init -q")
+    _ = write_file(repo + "/z.txt", "z", true)
+    _ = write_file(repo + "/a.txt", "a", true)
+    _ = write_file(repo + "/m.txt", "m", true)
+
+    result := audit_run_scent(repo, [
+        "pack", "--task", "unrelated", "--out", out,
+        "--max-files", "3", "--format", "json", "--json"
+    ])
+    assert_equal(result.exitcode, 0)
+    context := parse_json(read_file(out + "/context.json"))
+    selected_paths := []
+    i := 0
+    while i < len(context["selected_files"]) {
+        selected_paths = push(selected_paths, context["selected_files"][i]["path"])
+        i = i + 1
+    }
+    assert_equal(selected_paths, ["a.txt", "m.txt", "z.txt"])
+}
+
+test "malformed Cargo metadata does not suggest Cargo commands" {
+    audit_scope := true
+    func audit_shq(value) {
+        text := to_string(value)
+        return "'" + replace(text, "'", "'\"'\"'") + "'"
+    }
+
+    func audit_run(command) {
+        result := execute_status(command, {"timeout_ms": 120000})
+        if type(result) == "struct" {
+            return result
+        }
+        return {"success": false, "exitcode": 1, "stdout": "", "stderr": "invalid execute_status result"}
+    }
+
+    func audit_run_scent(repo, argv) {
+        cwd := os_getcwd()
+        kujo_bin := env_or("KUJO_BIN", path_join(cwd, "../kujo/target/release/kujo"))
+        scent_script := env_or("SCENT_SCRIPT", path_join(cwd, "scent.kujo"))
+        command := "cd " + audit_shq(repo) + " && " + audit_shq(kujo_bin) + " run " + audit_shq(scent_script)
+        i := 0
+        while i < len(argv) {
+            command = command + " " + audit_shq(argv[i])
+            i = i + 1
+        }
+        return audit_run(command)
+    }
+
+    root := "/tmp/scent_regression_malformed_cargo"
+    repo := root + "/repo"
+    out := root + "/out"
+    _ = audit_run("rm -rf " + audit_shq(root) + " && mkdir -p " + audit_shq(repo) + " && cd " + audit_shq(repo) + " && git init -q")
+    _ = write_file(repo + "/Cargo.toml", "not = [valid", true)
+
+    result := audit_run_scent(repo, [
+        "pack", "--task", "commands", "--include", "Cargo.toml", "--out", out,
+        "--max-files", "1", "--format", "json", "--json"
+    ])
+    assert_equal(result.exitcode, 0)
+    context := parse_json(read_file(out + "/context.json"))
+    assert_equal(context["commands"], [])
 }
 
 main()
