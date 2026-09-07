@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -153,6 +154,19 @@ class Hardening(unittest.TestCase):
         self.assertTrue(json.loads(result.stdout)['ok'])
         self.assertEqual(destination.stat().st_size, 8388608)
 
+    def test_truncated_process_output_is_not_complete(self):
+        probe = self.root / 'process.kujo'
+        prefix = SCRIPT.read_text().split('func main()')[0]
+        argv = [sys.executable, '-c', 'print("x" * 1048577)']
+        probe.write_text(prefix + '\nr := run_process(parse_json(' +
+                         json.dumps(json.dumps(argv)) + '))\n' +
+                         'print(to_json({"success": r.success, "stdout": r.stdout}))\n')
+        result = subprocess.run([KUJO, 'run', str(probe)], check=True, capture_output=True,
+                                text=True, timeout=120)
+        receipt = json.loads(result.stdout)
+        self.assertFalse(receipt['success'])
+        self.assertEqual(receipt['stdout'], '')
+
     def test_score_order_equivalence(self):
         # Execute the real private helper without the CLI; oracle is Python's
         # lexicographic score/path ordering, including ties and unusual names.
@@ -176,6 +190,10 @@ class Hardening(unittest.TestCase):
         self.assertLess(len(json.dumps(receipt)), 1024)
         self.pack('--include', 'safe.txt')
         context = self.context()
+        inventory = json.loads((self.out / 'files.json').read_text())
+        for key, expected in [('is_changed', 1), ('is_staged', 0), ('is_unstaged', 0)]:
+            self.assertIs(type(inventory[0][key]), int)
+            self.assertEqual(inventory[0][key], expected)
         self.assertEqual(receipt['estimated_tokens'], context['estimated_tokens'])
         self.assertEqual(receipt['included_files'], len(context['selected_files']))
         self.pack('--include', 'safe.txt', '--format', 'md')

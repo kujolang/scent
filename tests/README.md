@@ -33,6 +33,8 @@ The Python suite protects mixed JWT/provider redaction, source-line provenance,
 normalized exclusions, pruning before candidate limits, no-follow command
 discovery, atomic symlink/hard-link behavior, failure cleanup, permission
 preservation, exact score/path ordering, dry-run receipts, and format reuse.
+Additional cases enforce the 8 MiB write boundary, reject truncated process
+output as complete, and verify concurrent default packs use distinct directories.
 Run a named case with `python3 tests/hardening.py Hardening.test_mixed_tokens`.
 
 Performance evidence: `KUJO_BIN=kujo python3 scripts/benchmark.py --files 24

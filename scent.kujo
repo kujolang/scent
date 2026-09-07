@@ -406,18 +406,14 @@ func canonical_path_for_scope(path) {
 }
 
 func split_nul_records(text) {
+    # Git -z uses one terminator per nonempty path. Remove its trailing empty
+    # split item natively; no whitespace or embedded newline is path syntax.
     nul := parse_json("\"\\u0000\"")
     records := split(to_string(text), nul)
-    out := []
-    i := 0
-    while i < len(records) {
-        record := records[i]
-        if record != "" {
-            out = push(out, record)
-        }
-        i = i + 1
+    if len(records) > 0 && records[len(records) - 1] == "" {
+        return slice(records, 0, len(records) - 1)
     }
-    return out
+    return records
 }
 
 func inspect_git(repo_root) {
@@ -476,14 +472,16 @@ func inspect_git(repo_root) {
 
     summaries := []
     groups := [["staged: ", staged_files], ["unstaged: ", unstaged_files], ["untracked: ", untracked_files]]
+    nul := parse_json("\"\\u0000\"")
     group_index := 0
     while group_index < len(groups) {
         group := groups[group_index]
         paths := group[1]
-        path_index := 0
-        while path_index < len(paths) {
-            summaries = push(summaries, group[0] + paths[path_index])
-            path_index = path_index + 1
+        if len(paths) > 0 {
+            # NUL cannot occur inside a Git path. Prefix all records with native
+            # join/split rather than repeatedly copying a growing summary array.
+            prefixed := group[0] + join(paths, nul + group[0])
+            summaries = concat(summaries, split(prefixed, nul))
         }
         group_index = group_index + 1
     }
@@ -716,28 +714,9 @@ func collect_candidates(repo_root, git_info, instruction_files, includes, exclud
         i = i + 1
     }
 
-    changed_map := {}
-    i = 0
-    while i < len(git_info["changed_files"]) {
-        p := git_info["changed_files"][i]
-        changed_map[p] = 1
-        i = i + 1
-    }
-    staged_map := {}
-    i = 0
-    while i < len(git_info["staged_files"]) {
-        p := git_info["staged_files"][i]
-        staged_map[p] = 1
-        i = i + 1
-    }
-    unstaged_map := {}
-    i = 0
-    while i < len(git_info["unstaged_files"]) {
-        p := git_info["unstaged_files"][i]
-        unstaged_map[p] = 1
-        i = i + 1
-    }
-
+    # Candidate selection is bounded independently of Git's inventory. Native
+    # membership checks avoid constructing three potentially large copied maps
+    # for paths that are never candidates (for example, an excluded bulk tree).
     seen := {}
     candidates := []
 
@@ -779,9 +758,9 @@ func collect_candidates(repo_root, git_info, instruction_files, includes, exclud
             "path": full,
             "rel_path": rel,
             "size_bytes": size,
-            "is_changed": has_key(changed_map, rel),
-            "is_staged": has_key(staged_map, rel),
-            "is_unstaged": has_key(unstaged_map, rel),
+            "is_changed": to_int(contains(git_info["changed_files"], rel)),
+            "is_staged": to_int(contains(git_info["staged_files"], rel)),
+            "is_unstaged": to_int(contains(git_info["unstaged_files"], rel)),
             "is_instruction": has_key(instruction_rel, rel),
             "is_doc": is_doc_rel(rel),
             "is_test": is_test_rel(rel),
@@ -1475,19 +1454,11 @@ func markdown_fence(content) {
 }
 
 func markdown_section_list(title, items, empty_line) {
-    out := "## " + title + "\n\n"
+    heading := "## " + title + "\n\n"
     if len(items) == 0 {
-        out = out + empty_line + "\n\n"
-        return out
+        return heading + empty_line + "\n\n"
     }
-    i := 0
-    while i < len(items) {
-        item := items[i]
-        out = out + "- " + item + "\n"
-        i = i + 1
-    }
-    out = out + "\n"
-    return out
+    return heading + "- " + join(items, "\n- ") + "\n\n"
 }
 
 func build_markdown(task, target, budget, generated_at, repo_root, git_info, instruction_files, selected_files, changed_files, commands, constraints, excluded_manifest, redactions, manifest, estimated_tokens) {

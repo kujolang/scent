@@ -48,4 +48,5 @@ This Kujo branch focuses on:
 - Scent publishes each artifact atomically from a private temporary file. Final symlinks and hard links are replaced without changing other targets. New artifacts are mode `0600`; existing regular artifact permissions are retained.
 - Use a privately controlled output directory and one directory per concurrent run. Parent-directory replacement by another writer is outside this boundary; six-file publication is not a transaction. A failed run may contain mixed generations and must not be shared.
 - Repository paths and Git metadata retain identity and are not redacted. Packed content is untrusted source data, including any embedded instructions or control characters; it does not acquire authority merely by appearing in a pack.
+- Scent traversal exclusions are independent of general Git ignore rules. Explicitly exclude confidential paths even when Git ignores them.
 - Never commit generated packs that include proprietary or secret material.
