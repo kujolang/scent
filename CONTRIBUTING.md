@@ -121,6 +121,14 @@ Follow stricter runtime notes in the local repo when they exist.
 Before opening a pull request, run the strongest local validation available for
 the repo.
 
+Complete Scent validation (Kujo 1.3.1+, POSIX, Python 3):
+
+```bash
+KUJO_BIN=kujo bash scripts/verify.sh
+```
+
+The command saves detailed logs under `out/verification/` and exits nonzero on any failed gate. CI pins the runtime release and checksum. Update both together when intentionally changing the tested runtime. Existing formatter drift and advisory lint warnings are recorded in the audit report; avoid unrelated formatting churn.
+
 Focused Scent validation:
 
 ```bash

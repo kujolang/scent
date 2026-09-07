@@ -6,28 +6,28 @@
       "name": "Scent version command succeeds",
       "check": "command_succeeds",
       "params": {
-        "command": "cd /Users/robertdevore/2026/Kujolang/kujo-repos/scent && kujo run scent.kujo version"
+        "command": "kujo run scent.kujo version"
       }
     },
     {
       "name": "Scent static check succeeds",
       "check": "command_succeeds",
       "params": {
-        "command": "cd /Users/robertdevore/2026/Kujolang/kujo-repos/scent && kujo check scent.kujo"
+        "command": "kujo check scent.kujo"
       }
     },
     {
       "name": "Scent dry-run JSON smoke succeeds",
       "check": "command_succeeds",
       "params": {
-        "command": "cd /Users/robertdevore/2026/Kujolang/kujo-repos/scent && kujo run scent.kujo pack --task \"smoke\" --dry-run --json --max-files 3 --max-file-bytes 10000"
+        "command": "kujo run scent.kujo pack --task \"smoke\" --dry-run --json --max-files 3 --max-file-bytes 10000"
       }
     },
     {
       "name": "Scent version metadata exists",
       "check": "file_exists",
       "params": {
-        "path": "/Users/robertdevore/2026/Kujolang/kujo-repos/scent/VERSION"
+        "path": "VERSION"
       }
     }
   ]

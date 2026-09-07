@@ -1,0 +1,25 @@
+name: Scent verification
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+      - name: Install pinned Kujo runtime
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/kujo"
+          cd "$RUNNER_TEMP/kujo"
+          curl --fail --location --silent --show-error --output kujo.tar.gz \
+            https://github.com/kujolang/kujo/releases/download/v1.3.1/kujo-v1.3.1-linux-x64.tar.gz
+          echo '0d2162aad32b989bf8a766c8a6996b88cd299964c82ca9b9882b033ed6d33e50  kujo.tar.gz' | sha256sum --check
+          tar -xzf kujo.tar.gz
+          echo "KUJO_BIN=$RUNNER_TEMP/kujo/kujo" >> "$GITHUB_ENV"
+      - name: Verify behavior and artifact hygiene
+        run: bash scripts/verify.sh

@@ -18,3 +18,24 @@ Release smoke commands:
 kujo check scent.kujo
 kujo run scent.kujo pack --task "smoke" --dry-run --json
 ```
+
+## Complete verification
+
+Run `KUJO_BIN=kujo bash scripts/verify.sh` from the repository root. This runs the
+inline suite plus `tests/hardening.py` using Python's standard library, and the
+artifact guard. Logs are saved to a unique `out/verification/run.*` directory.
+Inline test fixture paths have unique IDs; the verification runner scopes them
+under its evidence directory for failure inspection. Python fixtures clean up
+automatically. A direct inline run may leave uniquely named `/tmp/scent_*`
+fixtures for debugging.
+
+The Python suite protects mixed JWT/provider redaction, source-line provenance,
+normalized exclusions, pruning before candidate limits, no-follow command
+discovery, atomic symlink/hard-link behavior, failure cleanup, permission
+preservation, exact score/path ordering, dry-run receipts, and format reuse.
+Run a named case with `python3 tests/hardening.py Hardening.test_mixed_tokens`.
+
+Performance evidence: `KUJO_BIN=kujo python3 scripts/benchmark.py --files 24
+--output out/benchmark.json` (one shell line). Runtime thresholds are deliberately
+not CI gates; exact ordering, content fingerprints, and receipt size are stable
+regression checks.

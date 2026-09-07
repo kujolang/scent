@@ -4,6 +4,10 @@ All notable changes to Scent are documented here.
 
 ## Unreleased
 
+- Harden repository reads, mixed-token redaction, source-line audit provenance, selector normalization, and atomic artifact publication with private defaults and preserved existing permissions (Kujo 1.3.1+, POSIX).
+- Replace pairwise candidate sorting and repeated Git-union copying; prune excluded trees and skip unnecessary redaction and artifact rendering work without changing selection order or receipt schemas.
+- Add portable CLI regressions, isolated inline fixtures, a repeatable benchmark, and checksum-pinned CI verification; correct the readiness spec to execute inline tests.
+
 - Align README version badge with the stable CLI/runtime metadata.
 - Add launch readiness spec and deterministic Eval suite for prelaunch review evidence.
 - Fix ten verified context-pack defects covering mandatory subcommands, selector normalization, symlink and binary traversal safety, bounded explicit includes, reusable output directories, credential-line parsing, Markdown fence containment, and budget manifest/redaction consistency.

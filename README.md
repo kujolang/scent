@@ -20,7 +20,7 @@ Prioritize copyable examples over tests: examples should model the most token-ef
 - Root (`.`) and trailing-slash selectors are normalized, and selectors containing symlinks are rejected
 - Artifact write path verified on safe local smoke data
 - Reusing an output directory overwrites current artifacts, removes stale optional context formats, and does not repack prior output
-- Artifact writes replace a pre-existing artifact symlink instead of following it to another file.
+- Artifact writes publish complete files atomically, replacing symlinks and hard links without changing their targets. Default pack directory names include a unique suffix for concurrent runs. New artifacts are owner-only (`0600`); existing regular artifact permissions are preserved.
 - `pack --dry-run` reports context estimates without writing files
 - Source layout: the canonical Kujo entrypoint is still `scent.kujo` at the repo root; generated `out/`, `.scent/`, and `target/` directories are ignored and should not be committed.
 
@@ -41,7 +41,7 @@ The structured `context.json` includes the task, target, budget, estimated token
 
 These commands are the canonical examples for this branch. They are meant to be copied from a shell in the repository you want to pack.
 
-1. Verify Kujo is installed:
+1. Verify Kujo 1.3.1 or newer is installed (POSIX environment):
 
 ```bash
 kujo --version
@@ -71,7 +71,7 @@ kujo run /path/to/scent/scent.kujo pack \
 Scent discovers the repo root from the current working directory, so run it inside the repository you want to pack.
 The `--target` flag selects the downstream model target; it does not select a repo path.
 Repeat `--include` or `--exclude` to focus multiple paths. These selectors must be relative to the discovered repository root, or absolute paths inside that root.
-Scent does not follow repository symlinks, and extensionless files containing NUL bytes are treated as binary.
+Scent does not follow repository symlinks, and extensionless files containing NUL bytes are treated as binary. Exclusions win over includes and are pruned before traversal; repeated slashes and `.` segments are normalized. Git focus flags boost priority rather than strictly filtering files.
 
 ## Position in Kujo
 
@@ -116,11 +116,15 @@ scent pack --task <text>
 - Keeps output bounded by explicit byte/token heuristics and repository-scoped include/exclude selectors.
 - Enforces `--max-file-bytes` as a UTF-8 byte limit without splitting a multibyte character.
 
+The token budget governs selected content using a character heuristic; it is not a hard limit on serialized metadata or model tokens. Use a separate, privately controlled output directory per concurrent run.
+
 See `SECURITY.md` for reporting and hardening guidance.
 
 ## Contributing
 
-See `CONTRIBUTING.md` for branch workflow, style, and PR expectations.
+Run `KUJO_BIN=kujo bash scripts/verify.sh` for static checks, all inline and CLI regressions, and artifact hygiene. It prints concise receipts and saves logs in `out/verification/`.
+
+See `CONTRIBUTING.md` for branch workflow, style, and PR expectations. Audit evidence and measured limitations are in [the repository hardening report](docs/audits/repository-hardening.md).
 
 ## License
 

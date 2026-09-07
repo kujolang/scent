@@ -43,7 +43,7 @@ eval_requirements:
   - description: "Run inline Kujo tests."
     check_type: "command"
     params:
-      command: "KUJO_BIN=kujo kujo test"
+      command: "KUJO_BIN=kujo kujo test-run scent.kujo"
 risks:
   - risk: "Pattern-based redaction may miss unknown secret formats or high-entropy tokens."
     mitigation: "Keep generated packs sensitive, require redactions.json review, and do not claim perfect DLP coverage."

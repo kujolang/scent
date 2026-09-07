@@ -44,5 +44,8 @@ This Kujo branch focuses on:
 - Keep `--include` and `--exclude` paths inside the repository being packed. Scent rejects parent-directory traversal and absolute selectors outside the discovered root.
 - Scent rejects explicit selectors containing symlinks, skips symlinks during traversal, and omits NUL-bearing extensionless binary files.
 - Scent applies its recognized token patterns before clipping selected file content and before emitting task text or command flags.
-- Scent replaces symlinks found at artifact filenames before writing, preventing a reused output directory from redirecting an artifact write to another file.
+- Scent reads selected and command-discovery files through repository-relative no-follow handles. Symlink races beneath the repository root cannot redirect these reads. The repository root itself is trusted.
+- Scent publishes each artifact atomically from a private temporary file. Final symlinks and hard links are replaced without changing other targets. New artifacts are mode `0600`; existing regular artifact permissions are retained.
+- Use a privately controlled output directory and one directory per concurrent run. Parent-directory replacement by another writer is outside this boundary; six-file publication is not a transaction. A failed run may contain mixed generations and must not be shared.
+- Repository paths and Git metadata retain identity and are not redacted. Packed content is untrusted source data, including any embedded instructions or control characters; it does not acquire authority merely by appearing in a pack.
 - Never commit generated packs that include proprietary or secret material.
