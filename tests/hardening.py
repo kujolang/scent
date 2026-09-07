@@ -182,6 +182,23 @@ class Hardening(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout),
                          sorted(items, key=lambda row: (-row['score'], row['candidate']['rel_path'])))
 
+    def test_isolated_eval_smoke(self):
+        # Keep launch smoke independent of the growing source/audit checkout.
+        (self.repo / 'README.md').write_text('# Smoke fixture\n')
+        (self.repo / 'settings.json').write_text('{"mode":"local"}\n')
+        (self.repo / 'tests').mkdir()
+        (self.repo / 'tests' / 'smoke.txt').write_text('offline fixture\n')
+        result = self.pack('--dry-run', '--max-files', '3', '--max-file-bytes', '10000')
+        receipt = json.loads(result.stdout)
+        self.assertFalse(self.out.exists())
+        self.assertEqual(receipt['included_files'], 3)
+        self.assertEqual(receipt['warnings'], [])
+        self.assertIsNone(receipt['context_md'])
+        self.assertIsNone(receipt['context_json'])
+        self.assertGreater(receipt['estimated_tokens'], 0)
+        self.assertLessEqual(receipt['estimated_tokens'], receipt['budget'])
+        self.assertLess(len(result.stdout.encode()), 1024)
+
     def test_dry_run_receipt_and_formats(self):
         (self.repo / 'safe.txt').write_text('safe\n')
         receipt = json.loads(self.pack('--include', 'safe.txt', '--dry-run').stdout)

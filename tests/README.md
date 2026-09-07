@@ -41,3 +41,9 @@ Performance evidence: `KUJO_BIN=kujo python3 scripts/benchmark.py --files 24
 --output out/benchmark.json` (one shell line). Runtime thresholds are deliberately
 not CI gates; exact ordering, content fingerprints, and receipt size are stable
 regression checks.
+
+Eval's launch smoke calls `Hardening.test_isolated_eval_smoke`: three small
+files in a temporary Git repository, the original three-file/byte limits,
+parseable bounded JSON, and no output writes. This removes the old dependency
+on the checkout's growing documentation without reducing assertions. Use the
+benchmark separately to measure repository-size effects.

@@ -20,7 +20,7 @@
       "name": "Scent dry-run JSON smoke succeeds",
       "check": "command_succeeds",
       "params": {
-        "command": "kujo run scent.kujo pack --task \"smoke\" --dry-run --json --max-files 3 --max-file-bytes 10000"
+        "command": "python3 tests/hardening.py Hardening.test_isolated_eval_smoke"
       }
     },
     {
