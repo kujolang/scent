@@ -166,3 +166,6 @@ Thumbs.db
 # /fence.toml
 # /.lens.toml
 # /packwrite.toml
+
+# Python verification bytecode
+__pycache__/
