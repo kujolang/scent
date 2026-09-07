@@ -1,0 +1,12 @@
+{
+  "vm": {
+    "exit_code": 4,
+    "stdout": "",
+    "stderr": "[KUJOVM001] [vm] Runtime Error: Maximum VM call stack depth of 256 exceeded while calling <lambda>\n  --> 0:0\n\nCall stack:\n  0 at work\n\n"
+  },
+  "interpreter": {
+    "exit_code": 0,
+    "stdout": "2001\n2001\ndone\n",
+    "stderr": ""
+  }
+}

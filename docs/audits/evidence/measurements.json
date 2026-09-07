@@ -1,0 +1,115 @@
+{
+  "baseline-benchmark": {
+    "files": 24,
+    "runs": 3,
+    "results": {
+      "both": {
+        "seconds": [
+          40.137320659996476,
+          49.157909442001255,
+          63.5762786980049
+        ],
+        "median_seconds": 49.157909442001255,
+        "stdout_bytes": 370,
+        "estimated_tokens": 525,
+        "included_files": 10,
+        "semantic_sha256": "746c8ea259a7ad90d872799495d858d2fdd417721fc161b0dfb6116fbb1c3f8e",
+        "context_json_bytes": 11601
+      },
+      "json": {
+        "seconds": [
+          48.22899135699845,
+          36.974399169004755,
+          31.41065204500046
+        ],
+        "median_seconds": 36.974399169004755,
+        "stdout_bytes": 287,
+        "estimated_tokens": 525,
+        "included_files": 10,
+        "semantic_sha256": "746c8ea259a7ad90d872799495d858d2fdd417721fc161b0dfb6116fbb1c3f8e",
+        "context_json_bytes": 11583
+      },
+      "dry-run": {
+        "seconds": [
+          25.907767048003734,
+          26.131802142001106,
+          27.778030337998644
+        ],
+        "median_seconds": 26.131802142001106,
+        "stdout_bytes": 202,
+        "estimated_tokens": 525,
+        "included_files": 10
+      }
+    }
+  },
+  "final-benchmark": {
+    "files": 24,
+    "runs": 3,
+    "results": {
+      "both": {
+        "seconds": [
+          28.94452605600236,
+          29.41554183900007,
+          27.926803640002618
+        ],
+        "median_seconds": 28.94452605600236,
+        "stdout_bytes": 370,
+        "estimated_tokens": 525,
+        "included_files": 10,
+        "semantic_sha256": "746c8ea259a7ad90d872799495d858d2fdd417721fc161b0dfb6116fbb1c3f8e",
+        "context_json_bytes": 11601
+      },
+      "json": {
+        "seconds": [
+          18.707831987994723,
+          19.100345011989702,
+          18.3138286780013
+        ],
+        "median_seconds": 18.707831987994723,
+        "stdout_bytes": 287,
+        "estimated_tokens": 525,
+        "included_files": 10,
+        "semantic_sha256": "746c8ea259a7ad90d872799495d858d2fdd417721fc161b0dfb6116fbb1c3f8e",
+        "context_json_bytes": 11583
+      },
+      "dry-run": {
+        "seconds": [
+          15.678400826000143,
+          16.120643747999566,
+          15.241003678995185
+        ],
+        "median_seconds": 15.678400826000143,
+        "stdout_bytes": 202,
+        "estimated_tokens": 525,
+        "included_files": 10
+      }
+    }
+  },
+  "budget-accounting": {
+    "budget": 1450,
+    "reported_estimated_tokens": 5,
+    "included_files": 1,
+    "full_artifact_character_estimates": {
+      "context.md": {
+        "bytes": 10364,
+        "characters_divided_by_four_ceiling": 2591
+      },
+      "context.json": {
+        "bytes": 16282,
+        "characters_divided_by_four_ceiling": 4071
+      }
+    }
+  },
+  "environment": {
+    "runtime": "Kujo v1.3.1 official macOS x64 release",
+    "archive_sha256": "3c95e15da6d14be82126742ce07a1df1657646eaaa5ba7d84dbad756fe492a9c",
+    "measurement": "Python time.perf_counter; shared host with other workloads; not a dedicated performance runner",
+    "baseline_sha": "6e72cd06bf422a29e93148cf4edaddd98d937392",
+    "ending_implementation_sha": "3f5d8983a435dfb8d0edab4e189900270aa860dc"
+  },
+  "markdown-equivalence": {
+    "markdown_equal_after_timestamp_normalization": true,
+    "normalized_markdown_sha256": "b3786aa6d670a42c92a961656d945066ecd21126b527e41ec6e73e3223ab1497",
+    "bytes": 2437
+  }
+}

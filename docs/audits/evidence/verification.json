@@ -1,0 +1,43 @@
+{
+  "implementation_sha": "cdf6e7668824d2e52dd1155bddc5d12912fc5f2f",
+  "static_check": "pass",
+  "inline_tests": {
+    "passed": 16,
+    "total": 16,
+    "seconds": 221.866
+  },
+  "hardening_tests": {
+    "passed": 15,
+    "total": 15,
+    "seconds": 83.335,
+    "log": "out/audit/completed-hardening.log"
+  },
+  "artifact_guard": "pass",
+  "markdown_equivalence": "pass after timestamp normalization",
+  "format_check": {
+    "status": "needs_formatting",
+    "exit_code": 4,
+    "pre_existing": true
+  },
+  "lint": {
+    "exit_code": 0,
+    "warnings_before": 37,
+    "warnings_after": 43
+  },
+  "shipcheck": {
+    "gate_passed": true,
+    "warnings": 4
+  },
+  "concord": {
+    "exit_code": 0,
+    "findings": 2
+  },
+  "local_receipt": "out/verification/run.5awHFJ",
+  "eval": {
+    "passed": 4,
+    "total": 4,
+    "seconds": 13.07,
+    "smoke": "isolated three-file public CLI test with receipt and no-write assertions",
+    "unchanged_timeout_seconds": 30
+  }
+}

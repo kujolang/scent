@@ -1,0 +1,10 @@
+func work() {
+    nul := parse_json("\"\\u0000\"")
+    records := split(repeat("safe" + nul, 2001), nul)
+    a := filter(records, func(x) { return x != "" })
+    print(len(a))
+    b := map(a, func(x) { return "prefix: " + x })
+    print(len(b))
+}
+work()
+print("done")
