@@ -213,6 +213,12 @@ class Hardening(unittest.TestCase):
             self.assertEqual(inventory[0][key], expected)
         self.assertEqual(receipt['estimated_tokens'], context['estimated_tokens'])
         self.assertEqual(receipt['included_files'], len(context['selected_files']))
+        self.assertEqual(receipt['selected_files'], [
+            {key: file[key] for key in ('path', 'reason', 'score', 'estimated_tokens', 'truncated')}
+            for file in context['selected_files']])
+        self.assertEqual(receipt['excluded_count'], len(context['excluded']))
+        self.assertNotIn('content', receipt['selected_files'][0])
+        self.assertNotIn('content_hash', receipt['selected_files'][0])
         self.pack('--include', 'safe.txt', '--format', 'md')
         self.assertFalse((self.out / 'context.json').exists())
         self.pack('--include', 'safe.txt', '--format', 'json')
