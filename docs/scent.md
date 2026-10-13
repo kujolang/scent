@@ -130,3 +130,8 @@ score, estimated_tokens, truncated), plus an `excluded_count` including truncate
 manifest entries. It omits file contents and content hashes,
 and creates no artifacts. Integrations can inspect this selection before
 requesting content separately. Paths remain sensitive repository metadata.
+
+Drive-qualified Windows paths are normalized when computing repository-relative
+selection paths. Sibling paths remain absolute and are rejected by bounded reads.
+This supports dry-run selection; artifact writing still requires POSIX private-file
+primitives. Literal backslashes in POSIX filenames retain their identity.
