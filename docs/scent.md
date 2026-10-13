@@ -124,3 +124,9 @@ Full-pack transactions, a full-artifact token budget, and path-metadata redactio
 need separate compatibility design. Paths and repository metadata retain exact
 identity and may themselves be sensitive. See the repository-local audit report
 for evidence and prioritization.
+
+`pack --dry-run --json` also returns `selected_files` metadata (path, reason,
+score, estimated_tokens, truncated), plus an `excluded_count` including truncated
+manifest entries. It omits file contents and content hashes,
+and creates no artifacts. Integrations can inspect this selection before
+requesting content separately. Paths remain sensitive repository metadata.
