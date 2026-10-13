@@ -38,6 +38,24 @@ class Hardening(unittest.TestCase):
     def context(self):
         return json.loads((self.out / 'context.json').read_text())
 
+    def test_drive_path_rel(self):
+        # Execute the actual source helper; the Kujo inline runner isolates tests
+        # from top-level functions and importing the CLI would execute main().
+        source = SCRIPT.read_text()
+        helper = source[source.index('func path_rel('):source.index('\nfunc has_parent_path_segment')]
+        cases = [(r'C:\repo', r'C:\repo\src\main.kujo', 'src/main.kujo'),
+                 ('C:/repo', r'C:\repo\src\main.kujo', 'src/main.kujo'),
+                 (r'C:\repo', r'C:\repo', '.'),
+                 (r'C:\repo', r'C:\repo-other\secret', 'C:/repo-other/secret'),
+                 ('/repo', r'/repo/literal\name', r'literal\name')]
+        calls = ','.join('path_rel(' + json.dumps(root) + ',' + json.dumps(full) + ')'
+                         for root, full, _ in cases)
+        probe = self.root / 'path_probe.kujo'
+        probe.write_text(helper + '\nprint(to_json([' + calls + ']))\n')
+        result = subprocess.run([KUJO, 'run', str(probe)], text=True, capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(json.loads(result.stdout), [expected for _, _, expected in cases])
+
     def test_mixed_tokens(self):
         jwt = 'abcdefghij.klmnopqrst.uvwxyzABCD'
         provider = 'sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ123456'
