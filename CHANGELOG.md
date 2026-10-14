@@ -2,7 +2,9 @@
 
 All notable changes to Scent are documented here.
 
-## Unreleased
+## [1.1.0] - 2026-10-14
+
+- Expose content-free dry-run selection metadata for host previews and normalize drive-qualified paths.
 
 - Harden repository reads, mixed-token redaction, source-line audit provenance, selector normalization, and atomic artifact publication with private defaults and preserved existing permissions (Kujo 1.3.1+, POSIX).
 - Replace pairwise candidate sorting and repeated Git-union copying; prune excluded trees and skip unnecessary redaction and artifact rendering work without changing selection order or receipt schemas.
